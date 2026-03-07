@@ -7,11 +7,16 @@ import solc from "solc";
 import {
   createPublicClient,
   createWalletClient,
+  encodePacked,
   getAddress,
   getContract as viemGetContract,
   http,
+  hexToBytes,
+  numberToHex,
   publicActions,
-  parseAbiItem
+  parseAbiItem,
+  pad,
+  toHex
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -46,6 +51,7 @@ export const DEFAULT_XCM_FEE_WEI = BigInt(process.env.XCM_FEE_WEI ?? "1000000000
 export const DEFAULT_TRANSACT_GAS_LIMIT = BigInt(process.env.XCM_TRANSACT_GAS_LIMIT ?? "300000");
 export const DEFAULT_TRANSACT_REF_TIME = BigInt(process.env.XCM_TRANSACT_REF_TIME ?? "5000000000");
 export const DEFAULT_TRANSACT_PROOF_SIZE = BigInt(process.env.XCM_TRANSACT_PROOF_SIZE ?? "200000");
+export const DEFAULT_XCM_VERSION = Number.parseInt(process.env.XCM_VERSION ?? "5", 10);
 const SUBSTRATE_WS_RETRIES = Number.parseInt(process.env.SUBSTRATE_WS_RETRIES ?? "3", 10);
 const SUBSTRATE_WS_RETRY_DELAY_MS = Number.parseInt(process.env.SUBSTRATE_WS_RETRY_DELAY_MS ?? "1500", 10);
 
@@ -96,6 +102,21 @@ export function createClients(networkName) {
     }
   };
   return { config, account, publicClient, walletClient, nonceManager };
+}
+
+export function deriveSiblingSovereignAccount(paraId) {
+  const paraIdHex = toHex(Uint8Array.from([
+    paraId & 0xff,
+    (paraId >> 8) & 0xff,
+    (paraId >> 16) & 0xff,
+    (paraId >> 24) & 0xff
+  ]));
+  return getAddress(
+    encodePacked(
+      ["bytes4", "bytes4", "bytes12"],
+      [toHex("sibl", { size: 4 }), paraIdHex, "0x000000000000000000000000"]
+    )
+  );
 }
 
 export async function createSubstrateApi(networkName) {
@@ -252,12 +273,13 @@ function createTypeWithFallback(api, typeNames, value) {
   throw lastError;
 }
 
-export function encodeVersionedLocation(api, paraId, parents = 1) {
+export function encodeVersionedLocation(api, paraId, parents = 1, version = DEFAULT_XCM_VERSION) {
+  const versionKey = `V${version}`;
   return createTypeWithFallback(
     api,
     ["XcmVersionedLocation", "VersionedLocation", "StagingXcmVersionedLocation"],
     {
-      V4: {
+      [versionKey]: {
         parents,
         interior: {
           X1: [{ Parachain: paraId }]
@@ -267,9 +289,19 @@ export function encodeVersionedLocation(api, paraId, parents = 1) {
   ).toHex();
 }
 
-export function encodeVersionedXcm(api, instructions) {
+export function encodeDestinationLocation(api, paraId, parents = 1) {
+  return createTypeWithFallback(api, ["MultiLocation", "StagingXcmV5Location"], {
+    parents,
+    interior: {
+      X1: [{ Parachain: paraId }]
+    }
+  }).toHex();
+}
+
+export function encodeVersionedXcm(api, instructions, version = DEFAULT_XCM_VERSION) {
+  const versionKey = `V${version}`;
   return createTypeWithFallback(api, ["XcmVersionedXcm", "VersionedXcm", "StagingXcmVersionedXcm"], {
-    V4: instructions
+    [versionKey]: instructions
   }).toHex();
 }
 
@@ -288,10 +320,28 @@ export function buildMoonbeamTransactCall(moonbeamApi, target, input, gasLimit =
     .method.toHex();
 }
 
+export async function estimateMoonbeamTransactWeight(moonbeamApi, payer, target, input, gasLimit = DEFAULT_TRANSACT_GAS_LIMIT) {
+  const payment = await moonbeamApi.tx.ethereumXcm
+    .transact({
+      V2: {
+        gasLimit,
+        action: {
+          Call: getAddress(target)
+        },
+        value: 0,
+        input
+      }
+    })
+    .paymentInfo(getAddress(payer));
+
+  return payment.weight.toJSON ? payment.weight.toJSON() : payment.weight;
+}
+
 export function buildMoonbeamExecutionMessage(
   hubApi,
   ethereumXcmCall,
   {
+    xcmVersion = DEFAULT_XCM_VERSION,
     feeAmount = DEFAULT_XCM_FEE_WEI,
     requireWeightAtMost = {
       refTime: DEFAULT_TRANSACT_REF_TIME,
@@ -301,11 +351,9 @@ export function buildMoonbeamExecutionMessage(
 ) {
   const feeAsset = {
     id: {
-      Concrete: {
-        parents: 0,
-        interior: {
-          X1: [{ PalletInstance: 3 }]
-        }
+      parents: 0,
+      interior: {
+        X1: [{ PalletInstance: 3 }]
       }
     },
     fun: {
@@ -313,24 +361,76 @@ export function buildMoonbeamExecutionMessage(
     }
   };
 
-  return encodeVersionedXcm(hubApi, [
-    { WithdrawAsset: [feeAsset] },
-    {
-      BuyExecution: {
-        fees: feeAsset,
-        weightLimit: "Unlimited"
+  return encodeVersionedXcm(
+    hubApi,
+    [
+      { WithdrawAsset: [feeAsset] },
+      { BuyExecution: [feeAsset, { Unlimited: null }] },
+      {
+        Transact: {
+          originKind: "SovereignAccount",
+          requireWeightAtMost,
+          call: {
+            encoded: ethereumXcmCall
+          }
+        }
       }
-    },
+    ],
+    xcmVersion
+  );
+}
+
+export async function getHubParaId(hubApi) {
+  return Number((await hubApi.query.parachainInfo.parachainId()).toString());
+}
+
+export async function ensureMoonbeamSovereignBalance(
+  moonbeam,
+  sovereignAccount,
+  {
+    minBalance = DEFAULT_XCM_FEE_WEI * 2n,
+    topUpBalance = DEFAULT_XCM_FEE_WEI * 10n
+  } = {}
+) {
+  const currentBalance = await moonbeam.publicClient.getBalance({ address: sovereignAccount });
+  if (currentBalance >= minBalance) {
+    return { funded: false, balance: currentBalance };
+  }
+
+  const value = topUpBalance > currentBalance ? topUpBalance - currentBalance : minBalance;
+  const hash = await moonbeam.walletClient.sendTransaction({
+    account: moonbeam.account,
+    chain: moonbeam.walletClient.chain,
+    nonce: moonbeam.nonceManager ? await moonbeam.nonceManager.next() : undefined,
+    to: sovereignAccount,
+    value
+  });
+  await moonbeam.publicClient.waitForTransactionReceipt({ hash });
+  const balance = await moonbeam.publicClient.getBalance({ address: sovereignAccount });
+  return { funded: true, balance };
+}
+
+export async function dryRunMoonbeamExecutionMessage(moonbeamApi, originParaId, encodedMessage) {
+  const message = createTypeWithFallback(
+    moonbeamApi,
+    ["XcmVersionedXcm", "VersionedXcm", "StagingXcmVersionedXcm"],
+    hexToBytes(encodedMessage)
+  );
+  const origin = createTypeWithFallback(
+    moonbeamApi,
+    ["XcmVersionedLocation", "VersionedLocation", "StagingXcmVersionedLocation"],
     {
-      Transact: {
-        originKind: "SovereignAccount",
-        requireWeightAtMost,
-        call: {
-          encoded: ethereumXcmCall
+      [`V${DEFAULT_XCM_VERSION}`]: {
+        parents: 1,
+        interior: {
+          X1: [{ Parachain: originParaId }]
         }
       }
     }
-  ]);
+  );
+
+  const result = await moonbeamApi.call.dryRunApi.dryRunXcm(origin, message);
+  return result.toJSON ? result.toJSON() : result;
 }
 
 export async function waitForRemoteExecutionLog(publicClient, target, requestId, fromBlock) {

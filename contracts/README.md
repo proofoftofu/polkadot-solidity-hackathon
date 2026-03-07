@@ -51,6 +51,7 @@ For live two-chain deployment, these env vars are the important ones:
 - `MOONBASE_RPC_URL` optional override
 - `MOONBASE_WS_URL` required for Moonbeam runtime metadata access
 - `MOONBASE_PARA_ID` optional override, default `1000`
+- `XCM_VERSION` optional XCM version for the live payload, default `5`
 - `XCM_FEE_WEI` optional Moonbase fee amount for `BuyExecution`
 - `XCM_TRANSACT_GAS_LIMIT` optional Moonbeam EVM gas limit
 - `XCM_TRANSACT_REF_TIME` optional XCM transact ref time

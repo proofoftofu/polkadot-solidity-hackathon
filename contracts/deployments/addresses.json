@@ -6,7 +6,7 @@
     "executionModule": "0xB696d9386a5f0099d32567089b4AE35B50D37Ba5",
     "sponsoredExecutionPaymaster": "0x8F5f3A7a54076Bc3afCC99794E86B16ad577A0b5",
     "crossChainDispatcher": "0x2479CF332cE90b55EC8df97a8AD92b266f5AdA57",
-    "moonbeamDestination": "0x04010100a10f",
+    "moonbeamDestination": "0x05010100a10f",
     "moonbaseParaId": 1000,
     "xcmPrecompile": "0x00000000000000000000000000000000000a0000"
   },

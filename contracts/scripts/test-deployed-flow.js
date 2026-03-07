@@ -1,14 +1,20 @@
 import {
-  DEFAULT_MOONBASE_PARA_ID,
   buildMoonbeamExecutionMessage,
   buildMoonbeamTransactCall,
   createClients,
   createSubstrateApi,
+  deriveSiblingSovereignAccount,
+  dryRunMoonbeamExecutionMessage,
   encodeVersionedLocation,
+  ensureMoonbeamSovereignBalance,
+  estimateMoonbeamTransactWeight,
   getContract,
+  getHubParaId,
   readArtifact,
   readDeployment,
+  updateAddressesIndex,
   waitForRemoteExecutionLog,
+  writeDeployment,
   writeContract
 } from "./common.js";
 import { encodeFunctionData, getAddress, stringToHex } from "viem";
@@ -40,30 +46,65 @@ async function main() {
 
   const memo = stringToHex(`memo-${Date.now()}`, { size: 32 });
   const requestId = stringToHex(`req-${Date.now()}`, { size: 32 });
+  const hubParaId = await getHubParaId(hubApi);
+  const moonbaseParaId = await getHubParaId(moonbeamApi);
+  const hubSovereignAccount = deriveSiblingSovereignAccount(hubParaId);
   const remoteCallData = encodeFunctionData({
     abi: targetArtifact.abi,
     functionName: "recordRemoteExecution",
     args: [requestId, memo]
   });
+  const requireWeightAtMost = await estimateMoonbeamTransactWeight(
+    moonbeamApi,
+    moonbeam.account.address,
+    moonbeamDeployment.contracts.crossChainTarget,
+    remoteCallData
+  );
   const moonbeamEthereumXcmCall = buildMoonbeamTransactCall(
     moonbeamApi,
     moonbeamDeployment.contracts.crossChainTarget,
     remoteCallData
   );
-  const encodedMessage = buildMoonbeamExecutionMessage(hubApi, moonbeamEthereumXcmCall);
-  const encodedDestination =
-    hubDeployment.contracts.moonbeamDestination ??
-    encodeVersionedLocation(hubApi, hubDeployment.contracts.moonbaseParaId ?? DEFAULT_MOONBASE_PARA_ID, 1);
+  const encodedMessage = buildMoonbeamExecutionMessage(hubApi, moonbeamEthereumXcmCall, {
+    requireWeightAtMost
+  });
+  const encodedDestination = encodeVersionedLocation(
+    hubApi,
+    moonbaseParaId,
+    1
+  );
 
   const configuredDestination = await dispatcher.read.destination();
   if (configuredDestination.toLowerCase() !== encodedDestination.toLowerCase()) {
-    throw new Error(
-      `Dispatcher destination mismatch. Expected ${encodedDestination}, got ${configuredDestination}. Re-deploy or call setDestination first.`
-    );
+    console.log(`Updating dispatcher destination from ${configuredDestination} to ${encodedDestination}`);
+    await writeContract(dispatcher.write.setDestination, [encodedDestination], hub.publicClient, hub.nonceManager);
+    hubDeployment.contracts.moonbeamDestination = encodedDestination;
+    hubDeployment.contracts.moonbaseParaId = moonbaseParaId;
+    await writeDeployment("polkadotTestnet", hubDeployment);
+    await updateAddressesIndex("polkadotTestnet", hubDeployment);
   }
 
-  const weight = await dispatcher.read.estimateEncodedMessageWeight([encodedMessage]);
-  console.log(`Estimated Hub XCM weight: refTime=${weight.refTime} proofSize=${weight.proofSize}`);
+  const funding = await ensureMoonbeamSovereignBalance(moonbeam, hubSovereignAccount);
+  if (funding.funded) {
+    console.log(`Funded Hub sovereign account on Moonbase: ${hubSovereignAccount}`);
+  }
+  console.log(`Moonbase Hub sovereign balance: ${funding.balance}`);
+
+  const dryRun = await dryRunMoonbeamExecutionMessage(moonbeamApi, hubParaId, encodedMessage);
+  const executionResult = dryRun?.ok?.executionResult ?? dryRun?.executionResult;
+  if (!executionResult || executionResult.incomplete || executionResult.error) {
+    throw new Error(`Moonbase dry-run failed for Hub message: ${JSON.stringify(dryRun)}`);
+  }
+
+  try {
+    const weight = await dispatcher.read.estimateEncodedMessageWeight([encodedMessage]);
+    console.log(`Estimated Hub XCM weight: refTime=${weight.refTime} proofSize=${weight.proofSize}`);
+  } catch (error) {
+    console.log("Weight estimation failed on the Hub precompile. Continuing with send() because XCM send does not require a weight parameter.");
+    if (error instanceof Error) {
+      console.log(error.message);
+    }
+  }
 
   const fromBlock = await moonbeam.publicClient.getBlockNumber();
   const hubReceipt = await writeContract(

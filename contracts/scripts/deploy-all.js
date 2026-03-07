@@ -7,6 +7,7 @@ import {
   deployFromArtifact,
   encodeVersionedLocation,
   getContract,
+  getHubParaId,
   readArtifact,
   updateAddressesIndex,
   writeContract,
@@ -23,6 +24,7 @@ async function deployPolkadotHub() {
   const paymasterArtifact = await readArtifact("SponsoredExecutionPaymaster.sol", "SponsoredExecutionPaymaster");
   const dispatcherArtifact = await readArtifact("CrossChainDispatcher.sol", "CrossChainDispatcher");
   const hubApi = await createSubstrateApi("polkadotTestnet");
+  const moonbeamApi = await createSubstrateApi("moonbaseAlpha");
 
   const entryPoint = await deployFromArtifact(walletClient, publicClient, entryPointArtifact, [], nonceManager);
   const walletFactory =
@@ -39,7 +41,8 @@ async function deployPolkadotHub() {
     nonceManager
   );
 
-  const moonbeamDestination = encodeVersionedLocation(hubApi, DEFAULT_MOONBASE_PARA_ID, 1);
+  const moonbaseParaId = await getHubParaId(moonbeamApi);
+  const moonbeamDestination = encodeVersionedLocation(hubApi, moonbaseParaId, 1);
   const crossChainDispatcher = await deployFromArtifact(
     walletClient,
     publicClient,
@@ -60,12 +63,13 @@ async function deployPolkadotHub() {
       sponsoredExecutionPaymaster,
       crossChainDispatcher,
       moonbeamDestination,
-      moonbaseParaId: DEFAULT_MOONBASE_PARA_ID,
+      moonbaseParaId,
       xcmPrecompile: XCM_PRECOMPILE
     }
   };
 
   await hubApi.disconnect();
+  await moonbeamApi.disconnect();
   await writeDeployment("polkadotTestnet", deployment);
   await updateAddressesIndex("polkadotTestnet", deployment);
   return deployment;
