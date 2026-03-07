@@ -19,8 +19,15 @@ interface I4337Paymaster {
     function postOp(bytes calldata context, bool success) external;
 }
 
+interface IAccountFactory {
+    function createWallet(address owner) external returns (address wallet);
+}
+
 contract MockEntryPoint {
+    error SenderDeploymentFailed();
+    error SenderAddressMismatch();
     error PaymasterValidationFailed();
+    error AccountExecutionFailed(bytes reason);
 
     event UserOperationHandled(address indexed sender, bytes32 indexed userOpHash, address indexed paymaster);
 
@@ -29,6 +36,7 @@ contract MockEntryPoint {
             PackedUserOperation calldata userOp = ops[i];
             bytes32 userOpHash = getUserOpHash(userOp);
 
+            _deploySenderIfNeeded(userOp);
             I4337Account(userOp.sender).validateUserOp(userOp, userOpHash, 0);
 
             address paymaster = address(0);
@@ -43,8 +51,9 @@ contract MockEntryPoint {
             }
 
             bool success = true;
-            try I4337Account(userOp.sender).executeUserOp(userOp, userOpHash) {} catch {
+            try I4337Account(userOp.sender).executeUserOp(userOp, userOpHash) {} catch (bytes memory reason) {
                 success = false;
+                revert AccountExecutionFailed(reason);
             }
 
             if (paymaster != address(0)) {
@@ -70,5 +79,26 @@ contract MockEntryPoint {
                 keccak256(userOp.paymasterAndData)
             )
         );
+    }
+
+    function _deploySenderIfNeeded(PackedUserOperation calldata userOp) private {
+        if (userOp.initCode.length == 0 || userOp.sender.code.length != 0) {
+            return;
+        }
+        if (userOp.initCode.length < 20) {
+            revert SenderDeploymentFailed();
+        }
+
+        address factory = address(bytes20(userOp.initCode[:20]));
+        bytes calldata factoryCallData = userOp.initCode[20:];
+        (bool success, bytes memory returnData) = factory.call(factoryCallData);
+        if (!success) {
+            revert SenderDeploymentFailed();
+        }
+
+        address deployedSender = abi.decode(returnData, (address));
+        if (deployedSender != userOp.sender || userOp.sender.code.length == 0) {
+            revert SenderAddressMismatch();
+        }
     }
 }

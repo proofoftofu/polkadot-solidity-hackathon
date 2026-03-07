@@ -15,6 +15,7 @@ contract AgentSmartWallet is IERC1271, IERC7579Execution, IERC7579AccountConfig,
     error ModuleAlreadyInstalled();
     error ModuleNotInstalled();
     error UnauthorizedCaller();
+    error UnauthorizedBootstrap();
     error InvalidExecutionCalldata();
     error ExecutionFailed(bytes reason);
     error InvalidValidatorSelection();
@@ -25,6 +26,7 @@ contract AgentSmartWallet is IERC1271, IERC7579Execution, IERC7579AccountConfig,
     address public immutable owner;
     address public immutable entryPoint;
     uint256 public nonce;
+    uint256 private _installedValidatorCount;
 
     mapping(uint256 moduleTypeId => mapping(address module => bool installed)) private _installedModules;
 
@@ -65,6 +67,17 @@ contract AgentSmartWallet is IERC1271, IERC7579Execution, IERC7579AccountConfig,
     }
 
     function installModule(uint256 moduleTypeId, address module, bytes calldata initData) external onlyOwner {
+        _installModule(moduleTypeId, module, initData);
+    }
+
+    function bootstrapInstallModule(uint256 moduleTypeId, address module, bytes calldata initData) external {
+        if (msg.sender != address(this) || _installedValidatorCount != 0) {
+            revert UnauthorizedBootstrap();
+        }
+        _installModule(moduleTypeId, module, initData);
+    }
+
+    function _installModule(uint256 moduleTypeId, address module, bytes calldata initData) internal {
         if (!supportsModule(moduleTypeId)) {
             revert UnsupportedModuleType();
         }
@@ -76,6 +89,9 @@ contract AgentSmartWallet is IERC1271, IERC7579Execution, IERC7579AccountConfig,
         }
 
         _installedModules[moduleTypeId][module] = true;
+        if (moduleTypeId == MODULE_TYPE_VALIDATOR) {
+            _installedValidatorCount += 1;
+        }
         IERC7579Module(module).onInstall(initData);
         emit ModuleInstalled(moduleTypeId, module);
     }
@@ -87,6 +103,9 @@ contract AgentSmartWallet is IERC1271, IERC7579Execution, IERC7579AccountConfig,
 
         IERC7579Module(module).onUninstall(deInitData);
         _installedModules[moduleTypeId][module] = false;
+        if (moduleTypeId == MODULE_TYPE_VALIDATOR) {
+            _installedValidatorCount -= 1;
+        }
         emit ModuleUninstalled(moduleTypeId, module);
     }
 
@@ -136,13 +155,19 @@ contract AgentSmartWallet is IERC1271, IERC7579Execution, IERC7579AccountConfig,
         }
 
         (address validator,) = abi.decode(userOp.signature, (address, bytes));
-        if (!_installedModules[MODULE_TYPE_VALIDATOR][validator]) {
-            revert InvalidValidatorSelection();
-        }
+        if (validator == address(0)) {
+            if (!_validateBootstrapUserOp(userOp, userOpHash)) {
+                revert UserOpValidationFailed();
+            }
+        } else {
+            if (!_installedModules[MODULE_TYPE_VALIDATOR][validator]) {
+                revert InvalidValidatorSelection();
+            }
 
-        validationData = IERC7579Validator(validator).validateUserOp(userOp, userOpHash);
-        if (validationData != 0) {
-            revert UserOpValidationFailed();
+            validationData = IERC7579Validator(validator).validateUserOp(userOp, userOpHash);
+            if (validationData != 0) {
+                revert UserOpValidationFailed();
+            }
         }
 
         nonce += 1;
@@ -214,6 +239,42 @@ contract AgentSmartWallet is IERC1271, IERC7579Execution, IERC7579AccountConfig,
         unused = uint32(raw >> 208);
         modeSelector = bytes4(uint32(raw >> 176));
         payload = bytes22(uint176(raw));
+    }
+
+    function _validateBootstrapUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash)
+        private
+        view
+        returns (bool)
+    {
+        if (_installedValidatorCount != 0 || nonce != 0 || userOp.initCode.length == 0) {
+            return false;
+        }
+
+        (, bytes memory ownerSignature) = abi.decode(userOp.signature, (address, bytes));
+        bytes32 digest =
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", keccak256(abi.encode(userOpHash, address(this), block.chainid))));
+        return _recover(digest, ownerSignature) == owner;
+    }
+
+    function _recover(bytes32 digest, bytes memory signature) private pure returns (address) {
+        if (signature.length != 65) {
+            revert InvalidValidatorSelection();
+        }
+
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            r := mload(add(signature, 32))
+            s := mload(add(signature, 64))
+            v := byte(0, mload(add(signature, 96)))
+        }
+
+        if (v < 27) {
+            v += 27;
+        }
+
+        return ecrecover(digest, v, r, s);
     }
 
     receive() external payable {}

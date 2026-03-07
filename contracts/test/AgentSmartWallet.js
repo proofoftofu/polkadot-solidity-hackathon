@@ -178,11 +178,81 @@ async function buildSignedUserOp({
   return { userOp, userOpHash };
 }
 
+async function buildBootstrapUserOp({
+  entryPoint,
+  walletFactory,
+  predictedWalletAddress,
+  owner,
+  validator,
+  target,
+  agent,
+  expiresAt,
+  targetChainId
+}) {
+  const initCode = `${walletFactory.address.toLowerCase()}${encodeFunctionData({
+    abi: walletFactory.abi,
+    functionName: "createWallet",
+    args: [owner.account.address]
+  }).slice(2)}`;
+  const callData = encodeFunctionData({
+    abi: [
+      {
+        type: "function",
+        name: "bootstrapInstallModule",
+        stateMutability: "nonpayable",
+        inputs: [
+          { name: "moduleTypeId", type: "uint256" },
+          { name: "module", type: "address" },
+          { name: "initData", type: "bytes" }
+        ],
+        outputs: []
+      }
+    ],
+    functionName: "bootstrapInstallModule",
+    args: [
+      1n,
+      validator.address,
+      sessionInitData(agent, target, "0x62f4b543", expiresAt, targetChainId)
+    ]
+  });
+
+  const userOp = {
+    sender: predictedWalletAddress,
+    nonce: 0n,
+    initCode,
+    callData,
+    accountGasLimits: zeroHash,
+    preVerificationGas: 0n,
+    gasFees: zeroHash,
+    paymasterAndData: "0x",
+    signature: "0x"
+  };
+
+  const userOpHash = await entryPoint.read.getUserOpHash([userOp]);
+  const payloadHash = keccak256(
+    encodeAbiParameters(
+      [{ type: "bytes32" }, { type: "address" }, { type: "uint256" }],
+      [userOpHash, predictedWalletAddress, targetChainId]
+    )
+  );
+  const ownerSignature = await owner.signMessage({ message: { raw: payloadHash } });
+  userOp.signature = encodeAbiParameters(
+    [{ type: "address" }, { type: "bytes" }],
+    [zeroAddress(), ownerSignature]
+  );
+
+  return { userOp, userOpHash };
+}
+
+function zeroAddress() {
+  return "0x0000000000000000000000000000000000000000";
+}
+
 describe("AgentSmartWallet", async function () {
   const { viem } = await network.connect();
   const publicClient = await viem.getPublicClient();
 
-  async function deployFixture() {
+  async function deployFixture({ createWallet = true } = {}) {
     const [deployer, owner, sponsor, agent] = await viem.getWalletClients();
     const publicClient = await viem.getPublicClient();
     const targetArtifact = await readArtifact("mocks/MockTarget.sol", "MockTarget");
@@ -208,9 +278,13 @@ describe("AgentSmartWallet", async function () {
     const entryPoint = await getContract(deployer, publicClient, entryPointArtifact, entryPointAddress);
     const walletFactory = await getContract(deployer, publicClient, walletFactoryArtifact, walletFactoryAddress);
     const predictedWalletAddress = await walletFactory.read.predictWallet([owner.account.address]);
-    await walletFactory.write.createWallet([owner.account.address], { account: deployer.account });
-    const walletAddress = await walletFactory.read.wallets([owner.account.address]);
-    const wallet = await getContract(deployer, publicClient, walletArtifact, walletAddress);
+    let walletAddress = predictedWalletAddress;
+    let wallet;
+    if (createWallet) {
+      await walletFactory.write.createWallet([owner.account.address], { account: deployer.account });
+      walletAddress = await walletFactory.read.wallets([owner.account.address]);
+      wallet = await getContract(deployer, publicClient, walletArtifact, walletAddress);
+    }
     const validatorAddress = await deployFromArtifact(deployer, publicClient, validatorArtifact, []);
     const executorAddress = await deployFromArtifact(deployer, publicClient, executorArtifact, []);
     const routerAddress = await deployFromArtifact(deployer, publicClient, routerArtifact, [ROUTER_DESTINATION]);
@@ -273,6 +347,40 @@ describe("AgentSmartWallet", async function () {
     assert.equal(getAddress(predictedWalletAddress), getAddress(wallet.address));
     assert.equal(await wallet.read.isModuleInstalled([1n, validator.address, "0x"]), true);
     assert.equal(await wallet.read.isModuleInstalled([2n, executor.address, "0x"]), true);
+  });
+
+  it("deploys the wallet from initCode on the first user operation", async function () {
+    const { owner, agent, target, entryPoint, walletFactory, predictedWalletAddress, validator } =
+      await deployFixture({ createWallet: false });
+    const latestBlock = await publicClient.getBlock();
+    const chainId = BigInt(await publicClient.getChainId());
+    const expiresAt = Number(latestBlock.timestamp + 3600n);
+
+    const { userOp, userOpHash } = await buildBootstrapUserOp({
+      entryPoint,
+      walletFactory,
+      predictedWalletAddress,
+      owner,
+      validator,
+      target,
+      agent,
+      expiresAt,
+      targetChainId: chainId
+    });
+
+    await viem.assertions.emitWithArgs(entryPoint.write.handleOps([[userOp]]), entryPoint, "UserOperationHandled", [
+      getAddress(predictedWalletAddress),
+      userOpHash,
+      zeroAddress()
+    ]);
+
+    const walletArtifact = await readArtifact("AgentSmartWallet.sol", "AgentSmartWallet");
+    const deployedWallet = await getContract(owner, publicClient, walletArtifact, predictedWalletAddress);
+
+    assert.notEqual(await publicClient.getCode({ address: predictedWalletAddress }), undefined);
+    assert.notEqual(await publicClient.getCode({ address: predictedWalletAddress }), "0x");
+    assert.equal(await deployedWallet.read.isModuleInstalled([1n, validator.address, "0x"]), true);
+    assert.equal(await walletFactory.read.wallets([owner.account.address]), getAddress(predictedWalletAddress));
   });
 
   it("executes a sponsored user operation through the entry point and paymaster", async function () {
