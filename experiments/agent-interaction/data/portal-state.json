@@ -1,6 +1,15 @@
 {
   "requests": [
     {
+      "id": "req_0b97db0870d6",
+      "agentName": "codex-agent",
+      "requestedAction": "wallet.sendTestToken",
+      "status": "approved",
+      "createdAt": "2026-03-07T03:33:48.786Z",
+      "updatedAt": "2026-03-07T03:33:58.420Z",
+      "sessionId": "session_e3be9ceccd57"
+    },
+    {
       "id": "req_34ebf4c9b679",
       "agentName": "codex-agent",
       "requestedAction": "wallet.sendTestToken",
@@ -11,6 +20,16 @@
     }
   ],
   "sessions": [
+    {
+      "id": "session_e3be9ceccd57",
+      "requestId": "req_0b97db0870d6",
+      "agentName": "codex-agent",
+      "allowedAction": "wallet.sendTestToken",
+      "status": "active",
+      "token": "sess_97dac3ad1b474921ec533c16",
+      "approvedAt": "2026-03-07T03:33:58.420Z",
+      "lastExecution": "2026-03-07T03:36:24.281Z"
+    },
     {
       "id": "session_a237f9ccf446",
       "requestId": "req_34ebf4c9b679",
@@ -23,6 +42,24 @@
     }
   ],
   "executions": [
+    {
+      "id": "exec_0d72000ae6d0",
+      "sessionId": "session_e3be9ceccd57",
+      "command": "wallet.sendTestToken",
+      "payload": {
+        "amount": "10",
+        "recipient": "5FdemoRecipient11111111111111111111111"
+      },
+      "executedAt": "2026-03-07T03:36:24.281Z",
+      "result": {
+        "summary": "Sponsored transfer simulated",
+        "transfer": {
+          "amount": "10",
+          "recipient": "5FdemoRecipient11111111111111111111111",
+          "txHash": "0x2eff36eb342d9c13a5db794d05407788"
+        }
+      }
+    },
     {
       "id": "exec_e52d752e00f6",
       "sessionId": "session_a237f9ccf446",
