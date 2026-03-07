@@ -83,20 +83,30 @@ contract CrossChainDispatcher {
     }
 
     function buildProgram(XcmProgram calldata program) public pure returns (bytes memory) {
-        TransferProgramSummary memory summary = _summarizeTransferProgram(program);
+        _summarizeTransferProgram(program);
 
-        return bytes.concat(
-            hex"050c0004010000",
-            _encodeCompact(summary.withdrawAmount),
-            hex"30010000",
-            _encodeCompact(summary.localFee),
-            hex"31010100",
-            _encodeCompact(summary.destinationParaId),
-            hex"01000004010000",
-            _encodeCompact(summary.remoteFee),
-            hex"000400010204040d01020400010100",
-            abi.encodePacked(summary.beneficiaryAccountId32)
-        );
+        bytes memory encoded = hex"05";
+        for (uint256 i = 0; i < program.instructions.length; i++) {
+            XcmInstruction calldata instruction = program.instructions[i];
+
+            if (instruction.kind == INSTRUCTION_KIND_WITHDRAW_ASSET) {
+                encoded = bytes.concat(encoded, _encodeWithdrawAsset(instruction));
+            } else if (instruction.kind == INSTRUCTION_KIND_PAY_FEES) {
+                encoded = bytes.concat(encoded, _encodePayFees(instruction));
+            } else if (instruction.kind == INSTRUCTION_KIND_INITIATE_TRANSFER) {
+                if (i + 1 >= program.instructions.length) {
+                    revert UnsupportedInstructionSequence();
+                }
+                encoded = bytes.concat(
+                    encoded, _encodeInitiateTransfer(instruction, program.instructions[i + 1])
+                );
+                i += 1;
+            } else {
+                revert UnsupportedInstructionSequence();
+            }
+        }
+
+        return encoded;
     }
 
     function estimateProgramWeight(XcmProgram calldata program) external view returns (IXcm.Weight memory) {
@@ -185,51 +195,93 @@ contract CrossChainDispatcher {
             revert InvalidInstructionCount();
         }
 
-        XcmInstruction calldata withdrawInstruction = program.instructions[0];
-        XcmInstruction calldata payFeesInstruction = program.instructions[1];
-        XcmInstruction calldata transferInstruction = program.instructions[2];
-        XcmInstruction calldata depositInstruction = program.instructions[3];
+        bool seenWithdrawAsset;
+        bool seenPayFees;
+        bool seenInitiateTransfer;
+        bool seenDepositAsset;
+
+        for (uint256 i = 0; i < program.instructions.length; i++) {
+            XcmInstruction calldata instruction = program.instructions[i];
+
+            if (instruction.kind == INSTRUCTION_KIND_WITHDRAW_ASSET) {
+                if (seenWithdrawAsset || seenPayFees || seenInitiateTransfer || seenDepositAsset) {
+                    revert UnsupportedInstructionSequence();
+                }
+                if (instruction.assetId != PAS_NATIVE_ASSET_ID) {
+                    revert InvalidInstructionAsset();
+                }
+                if (instruction.amount == 0) {
+                    revert InvalidInstructionAmount();
+                }
+                if (instruction.paraId != 0 || instruction.accountId32 != bytes32(0)) {
+                    revert UnsupportedInstructionSequence();
+                }
+
+                seenWithdrawAsset = true;
+                summary.assetId = instruction.assetId;
+                summary.withdrawAmount = instruction.amount;
+            } else if (instruction.kind == INSTRUCTION_KIND_PAY_FEES) {
+                if (!seenWithdrawAsset || seenPayFees || seenInitiateTransfer || seenDepositAsset) {
+                    revert UnsupportedInstructionSequence();
+                }
+                if (instruction.assetId != PAS_NATIVE_ASSET_ID) {
+                    revert InvalidInstructionAsset();
+                }
+                if (instruction.amount == 0) {
+                    revert InvalidInstructionAmount();
+                }
+                if (instruction.paraId != 0 || instruction.accountId32 != bytes32(0)) {
+                    revert UnsupportedInstructionSequence();
+                }
+
+                seenPayFees = true;
+                summary.localFee = instruction.amount;
+            } else if (instruction.kind == INSTRUCTION_KIND_INITIATE_TRANSFER) {
+                if (!seenWithdrawAsset || !seenPayFees || seenInitiateTransfer || seenDepositAsset) {
+                    revert UnsupportedInstructionSequence();
+                }
+                if (instruction.assetId != PAS_NATIVE_ASSET_ID) {
+                    revert InvalidInstructionAsset();
+                }
+                if (instruction.amount == 0) {
+                    revert InvalidInstructionAmount();
+                }
+                if (instruction.paraId == 0) {
+                    revert InvalidInstructionTarget();
+                }
+                if (instruction.accountId32 != bytes32(0)) {
+                    revert UnsupportedInstructionSequence();
+                }
+                if (i + 1 >= program.instructions.length) {
+                    revert UnsupportedInstructionSequence();
+                }
+
+                XcmInstruction calldata depositInstruction = program.instructions[i + 1];
+                if (
+                    depositInstruction.kind != INSTRUCTION_KIND_DEPOSIT_ASSET || depositInstruction.assetId != bytes32(0)
+                        || depositInstruction.amount != 0 || depositInstruction.paraId != 0
+                        || depositInstruction.accountId32 == bytes32(0)
+                ) {
+                    revert UnsupportedInstructionSequence();
+                }
+
+                seenInitiateTransfer = true;
+                seenDepositAsset = true;
+                summary.remoteFee = instruction.amount;
+                summary.destinationParaId = instruction.paraId;
+                summary.beneficiaryAccountId32 = depositInstruction.accountId32;
+                i += 1;
+            } else {
+                revert UnsupportedInstructionSequence();
+            }
+        }
 
         if (
-            withdrawInstruction.kind != INSTRUCTION_KIND_WITHDRAW_ASSET
-                || payFeesInstruction.kind != INSTRUCTION_KIND_PAY_FEES
-                || transferInstruction.kind != INSTRUCTION_KIND_INITIATE_TRANSFER
-                || depositInstruction.kind != INSTRUCTION_KIND_DEPOSIT_ASSET
+            !seenWithdrawAsset || !seenPayFees || !seenInitiateTransfer || !seenDepositAsset
+                || summary.withdrawAmount <= summary.localFee + summary.remoteFee
         ) {
             revert UnsupportedInstructionSequence();
         }
-        if (
-            withdrawInstruction.assetId != PAS_NATIVE_ASSET_ID || payFeesInstruction.assetId != PAS_NATIVE_ASSET_ID
-                || transferInstruction.assetId != PAS_NATIVE_ASSET_ID
-        ) {
-            revert InvalidInstructionAsset();
-        }
-        if (
-            withdrawInstruction.amount == 0 || payFeesInstruction.amount == 0 || transferInstruction.amount == 0
-                || withdrawInstruction.amount <= payFeesInstruction.amount + transferInstruction.amount
-        ) {
-            revert InvalidInstructionAmount();
-        }
-        if (transferInstruction.paraId == 0 || depositInstruction.accountId32 == bytes32(0)) {
-            revert InvalidInstructionTarget();
-        }
-        if (
-            withdrawInstruction.paraId != 0 || withdrawInstruction.accountId32 != bytes32(0)
-                || payFeesInstruction.paraId != 0 || payFeesInstruction.accountId32 != bytes32(0)
-                || depositInstruction.assetId != bytes32(0) || depositInstruction.amount != 0
-                || depositInstruction.paraId != 0
-        ) {
-            revert UnsupportedInstructionSequence();
-        }
-
-        summary = TransferProgramSummary({
-            assetId: withdrawInstruction.assetId,
-            withdrawAmount: withdrawInstruction.amount,
-            localFee: payFeesInstruction.amount,
-            remoteFee: transferInstruction.amount,
-            destinationParaId: transferInstruction.paraId,
-            beneficiaryAccountId32: depositInstruction.accountId32
-        });
     }
 
     function _encodeCompact(uint256 value) private pure returns (bytes memory encoded) {
@@ -264,5 +316,43 @@ contract CrossChainDispatcher {
 
     function _encodeParachainDestination(uint32 paraId) private pure returns (bytes memory) {
         return bytes.concat(hex"050100", _encodeCompact(paraId));
+    }
+
+    function _encodeWithdrawAsset(XcmInstruction calldata instruction) private pure returns (bytes memory) {
+        if (instruction.kind != INSTRUCTION_KIND_WITHDRAW_ASSET) {
+            revert UnsupportedInstructionSequence();
+        }
+
+        return bytes.concat(hex"0c0004010000", _encodeCompact(instruction.amount));
+    }
+
+    function _encodePayFees(XcmInstruction calldata instruction) private pure returns (bytes memory) {
+        if (instruction.kind != INSTRUCTION_KIND_PAY_FEES) {
+            revert UnsupportedInstructionSequence();
+        }
+
+        return bytes.concat(hex"30010000", _encodeCompact(instruction.amount));
+    }
+
+    function _encodeInitiateTransfer(XcmInstruction calldata instruction, XcmInstruction calldata depositInstruction)
+        private
+        pure
+        returns (bytes memory)
+    {
+        if (
+            instruction.kind != INSTRUCTION_KIND_INITIATE_TRANSFER
+                || depositInstruction.kind != INSTRUCTION_KIND_DEPOSIT_ASSET
+        ) {
+            revert UnsupportedInstructionSequence();
+        }
+
+        return bytes.concat(
+            hex"31010100",
+            _encodeCompact(instruction.paraId),
+            hex"01000004010000",
+            _encodeCompact(instruction.amount),
+            hex"000400010204040d01020400010100",
+            abi.encodePacked(depositInstruction.accountId32)
+        );
     }
 }

@@ -464,51 +464,79 @@ contract SessionKeyValidatorModule is IERC7579Validator {
             revert UnauthorizedAction();
         }
 
-        XcmInstruction memory withdrawInstruction = program.instructions[0];
-        XcmInstruction memory payFeesInstruction = program.instructions[1];
-        XcmInstruction memory transferInstruction = program.instructions[2];
-        XcmInstruction memory depositInstruction = program.instructions[3];
-
-        if (
-            withdrawInstruction.kind != XCM_INSTRUCTION_WITHDRAW_ASSET
-                || payFeesInstruction.kind != XCM_INSTRUCTION_PAY_FEES
-                || transferInstruction.kind != XCM_INSTRUCTION_INITIATE_TRANSFER
-                || depositInstruction.kind != XCM_INSTRUCTION_DEPOSIT_ASSET
-        ) {
-            revert UnauthorizedAction();
-        }
-        if (
-            !_isInstructionAllowed(allowedInstructionBitmap, withdrawInstruction.kind)
-                || !_isInstructionAllowed(allowedInstructionBitmap, payFeesInstruction.kind)
-                || !_isInstructionAllowed(allowedInstructionBitmap, transferInstruction.kind)
-                || !_isInstructionAllowed(allowedInstructionBitmap, depositInstruction.kind)
-        ) {
-            revert UnauthorizedAction();
-        }
-        if (
-            withdrawInstruction.amount == 0 || payFeesInstruction.amount == 0 || transferInstruction.amount == 0
-                || withdrawInstruction.amount <= payFeesInstruction.amount + transferInstruction.amount
-        ) {
-            revert UnauthorizedAction();
-        }
         if (
             (selector == EXECUTE_PROGRAM_SELECTOR && program.endpointKind != ENDPOINT_KIND_EXECUTE)
                 || (selector == DISPATCH_PROGRAM_SELECTOR && program.endpointKind != ENDPOINT_KIND_SEND)
         ) {
             revert UnauthorizedAction();
         }
-        if (transferInstruction.paraId == 0 || depositInstruction.accountId32 == bytes32(0)) {
-            revert UnauthorizedAction();
+
+        bool seenWithdrawAsset;
+        bool seenPayFees;
+        bool seenInitiateTransfer;
+        bool seenDepositAsset;
+
+        summary.endpointKind = program.endpointKind;
+        summary.selector = selector;
+
+        for (uint256 i = 0; i < program.instructions.length; i++) {
+            XcmInstruction memory instruction = program.instructions[i];
+
+            if (!_isInstructionAllowed(allowedInstructionBitmap, instruction.kind)) {
+                revert UnauthorizedAction();
+            }
+
+            if (instruction.kind == XCM_INSTRUCTION_WITHDRAW_ASSET) {
+                if (seenWithdrawAsset || seenPayFees || seenInitiateTransfer || seenDepositAsset) {
+                    revert UnauthorizedAction();
+                }
+                if (instruction.amount == 0) {
+                    revert UnauthorizedAction();
+                }
+                seenWithdrawAsset = true;
+                summary.primaryAssetId = instruction.assetId;
+                summary.primaryAmount = instruction.amount;
+            } else if (instruction.kind == XCM_INSTRUCTION_PAY_FEES) {
+                if (!seenWithdrawAsset || seenPayFees || seenInitiateTransfer || seenDepositAsset) {
+                    revert UnauthorizedAction();
+                }
+                if (instruction.amount == 0) {
+                    revert UnauthorizedAction();
+                }
+                seenPayFees = true;
+            } else if (instruction.kind == XCM_INSTRUCTION_INITIATE_TRANSFER) {
+                if (!seenWithdrawAsset || !seenPayFees || seenInitiateTransfer || seenDepositAsset) {
+                    revert UnauthorizedAction();
+                }
+                if (instruction.amount == 0 || instruction.paraId == 0 || i + 1 >= program.instructions.length) {
+                    revert UnauthorizedAction();
+                }
+
+                XcmInstruction memory depositInstruction = program.instructions[i + 1];
+                if (
+                    depositInstruction.kind != XCM_INSTRUCTION_DEPOSIT_ASSET
+                        || !_isInstructionAllowed(allowedInstructionBitmap, depositInstruction.kind)
+                        || depositInstruction.accountId32 == bytes32(0)
+                ) {
+                    revert UnauthorizedAction();
+                }
+
+                seenInitiateTransfer = true;
+                seenDepositAsset = true;
+                summary.destinationParaId = instruction.paraId;
+                summary.beneficiaryAccountId32 = depositInstruction.accountId32;
+                i += 1;
+            } else {
+                revert UnauthorizedAction();
+            }
         }
 
-        summary = XcmProgramSummary({
-            endpointKind: program.endpointKind,
-            selector: selector,
-            primaryAssetId: withdrawInstruction.assetId,
-            primaryAmount: withdrawInstruction.amount,
-            destinationParaId: transferInstruction.paraId,
-            beneficiaryAccountId32: depositInstruction.accountId32
-        });
+        if (
+            !seenWithdrawAsset || !seenPayFees || !seenInitiateTransfer || !seenDepositAsset
+                || summary.primaryAmount == 0
+        ) {
+            revert UnauthorizedAction();
+        }
     }
 
     function _recover(bytes32 digest, bytes memory signature) private pure returns (address) {
