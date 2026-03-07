@@ -12,6 +12,7 @@
     "deploy:all": "node scripts/deploy-all.js",
     "configure:hub": "node scripts/configure-hub.js",
     "test:deployed": "node scripts/test-deployed-flow.js",
+    "test:deployed:shibuya": "node scripts/test-deployed-flow-shibuya.js",
     "export:artifacts": "hardhat run scripts/export-artifacts.js --network hardhatMainnet"
   },
   "devDependencies": {

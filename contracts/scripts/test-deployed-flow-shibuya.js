@@ -1,5 +1,5 @@
 import {
-  buildPeopleChainTeleportMessage,
+  buildReserveTransferMessage,
   createClients,
   createSubstrateApi,
   getContract,
@@ -28,13 +28,12 @@ async function ensureDispatcherEvmBalance(hub, dispatcherAddress, minBalance) {
     return currentBalance;
   }
 
-  const topUp = minBalance - currentBalance;
   const receipt = await sendNative(
     hub.walletClient,
     hub.publicClient,
     undefined,
     dispatcherAddress,
-    topUp
+    minBalance - currentBalance
   );
 
   console.log(`dispatcherTopUpTx ${receipt.transactionHash}`);
@@ -81,7 +80,7 @@ async function main() {
 
   const hub = createClients("polkadotTestnet");
   const hubApi = await createSubstrateApi("polkadotTestnet");
-  const peopleApi = await createSubstrateApi("peoplePaseo");
+  const shibuyaApi = await createSubstrateApi("shibuyaAstar");
 
   const dispatcherArtifact = await readArtifact("CrossChainDispatcher.sol", "CrossChainDispatcher");
   const dispatcher = await getContract(
@@ -95,25 +94,29 @@ async function main() {
   const dispatcherDerived = evmToSubstrateAccount(dispatcherAddress);
   const ownerDerived = evmToSubstrateAccount(hub.account.address);
   const minimumDispatcherEvmBalance = BigInt(
-    process.env.XCM_MIN_DISPATCHER_EVM_BALANCE ?? "1000000000000000000"
+    process.env.SHIBUYA_MIN_DISPATCHER_EVM_BALANCE
+    ?? process.env.XCM_MIN_DISPATCHER_EVM_BALANCE
+    ?? "1000000000000000000"
   );
-  const paraId = Number.parseInt(process.env.PEOPLE_PASEO_PARA_ID ?? "1004", 10);
+  const paraId = Number.parseInt(process.env.SHIBUYA_PARA_ID ?? "2000", 10);
   const beneficiary =
-    process.env.XCM_TEST_BENEFICIARY
+    process.env.SHIBUYA_BENEFICIARY
+    ?? process.env.XCM_TEST_BENEFICIARY
     ?? "0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48";
   const transferAmount = BigInt(
-    process.env.PEOPLE_PASEO_TRANSFER_AMOUNT
-    ?? process.env.XCM_TRANSFER_AMOUNT
-    ?? "10000000000"
+    process.env.SHIBUYA_TRANSFER_AMOUNT
+    ?? "100000000000"
   );
-  const localFee = BigInt(process.env.PEOPLE_PASEO_LOCAL_FEE_AMOUNT ?? "1000000000");
-  const remoteFee = BigInt(process.env.PEOPLE_PASEO_REMOTE_FEE_AMOUNT ?? "1000000000");
+  const localFee = BigInt(process.env.SHIBUYA_LOCAL_FEE_AMOUNT ?? "10000000000");
+  const remoteFee = BigInt(process.env.SHIBUYA_REMOTE_FEE_AMOUNT ?? "100000000");
+  const assetHubParaId = Number.parseInt(process.env.SHIBUYA_ASSET_HUB_PARA_ID ?? "1000", 10);
   const encodedMessage =
     process.env.XCM_TEST_MESSAGE
-    ?? buildPeopleChainTeleportMessage(hubApi, paraId, beneficiary, {
+    ?? buildReserveTransferMessage(hubApi, paraId, beneficiary, {
+      assetHubParaId,
       amount: transferAmount,
       localFee,
-      remoteFee
+      remoteExecutionFee: remoteFee
     });
 
   const dispatcherEvmBalance = await ensureDispatcherEvmBalance(
@@ -122,14 +125,16 @@ async function main() {
     minimumDispatcherEvmBalance
   );
   const ownerEvmBalance = await hub.publicClient.getBalance({ address: hub.account.address });
+  const destinationBefore = await readFreeBalance(shibuyaApi, beneficiary);
 
   console.log("dispatcher", dispatcherAddress);
   console.log("dispatcherDerivedAccountId32", dispatcherDerived);
   console.log("ownerEvmAddress", hub.account.address);
   console.log("ownerDerivedAccountId32", ownerDerived);
   console.log("destinationParaId", paraId);
+  console.log("assetHubParaId", assetHubParaId);
   console.log("beneficiaryAccountId32", beneficiary);
-  console.log("beneficiarySs58", encodeAddress(beneficiary, 0));
+  console.log("beneficiarySs58", encodeAddress(beneficiary, 5));
   console.log("transferAmount", transferAmount.toString());
   console.log("localFee", localFee.toString());
   console.log("remoteFee", remoteFee.toString());
@@ -137,15 +142,14 @@ async function main() {
   console.log("ownerEvmBalance", ownerEvmBalance.toString());
   console.log("dispatcherDerivedFreeBalance", (await readFreeBalance(hubApi, dispatcherDerived)).toString());
   console.log("ownerDerivedFreeBalance", (await readFreeBalance(hubApi, ownerDerived)).toString());
-  const destinationBefore = await readFreeBalance(peopleApi, beneficiary);
   console.log("destinationBeneficiaryBalanceBefore", destinationBefore.toString());
   console.log("encodedMessage", encodedMessage);
 
-  const ownerAccountKey20Origin = {
+  const ownerAccountId32Origin = {
     V5: {
       parents: 0,
       interior: {
-        X1: [{ AccountKey20: { network: null, key: hub.account.address } }]
+        X1: [{ AccountId32: { network: null, id: ownerDerived } }]
       }
     }
   };
@@ -157,23 +161,7 @@ async function main() {
       }
     }
   };
-  const ownerAccountId32Origin = {
-    V5: {
-      parents: 0,
-      interior: {
-        X1: [{ AccountId32: { network: null, id: ownerDerived } }]
-      }
-    }
-  };
-  
-  console.log(
-    "dryRun owner AccountKey20",
-    JSON.stringify(
-      summarizeDryRun(await hubApi.call.dryRunApi.dryRunXcm(ownerAccountKey20Origin, encodedMessage)),
-      null,
-      2
-    )
-  );
+
   console.log(
     "dryRun owner derived AccountId32",
     JSON.stringify(
@@ -195,30 +183,24 @@ async function main() {
   console.log("weight", weight);
 
   const requestId = `0x${Date.now().toString(16).padEnd(64, "0")}`;
+  const hash = await dispatcher.write.executeEncodedMessage([requestId, encodedMessage, weight], {
+    account: hub.account
+  });
+  console.log(`Hub contract-origin execute tx: ${hash}`);
+  const receipt = await hub.publicClient.waitForTransactionReceipt({ hash });
+  const destinationAfter = await waitForDestinationIncrease(shibuyaApi, beneficiary, destinationBefore);
 
-  try {
-    const hash = await dispatcher.write.executeEncodedMessage([requestId, encodedMessage, weight], {
-      account: hub.account
-    });
-    console.log(`Hub contract-origin execute tx: ${hash}`);
-    const receipt = await hub.publicClient.waitForTransactionReceipt({ hash });
-    const destinationAfter = await waitForDestinationIncrease(peopleApi, beneficiary, destinationBefore);
-
-    console.log(`Hub contract-origin execute receipt: ${receipt.transactionHash}`);
-    console.log(`Dispatcher: ${dispatcherAddress}`);
-    console.log(`destinationBeneficiaryBalanceAfter ${destinationAfter.toString()}`);
-    console.log(`destinationBalanceDelta ${(destinationAfter - destinationBefore).toString()}`);
-    if (destinationAfter <= destinationBefore) {
-      throw new Error("Destination beneficiary balance did not increase within the polling window.");
-    }
-    console.log(`Verified contract-origin XCM precompile smoke execution for request ${requestId}`);
-  } catch (error) {
-    console.error("contractExecuteError", error);
-    process.exitCode = 1;
+  console.log(`Hub contract-origin execute receipt: ${receipt.transactionHash}`);
+  console.log(`Dispatcher: ${dispatcherAddress}`);
+  console.log(`destinationBeneficiaryBalanceAfter ${destinationAfter.toString()}`);
+  console.log(`destinationBalanceDelta ${(destinationAfter - destinationBefore).toString()}`);
+  if (destinationAfter <= destinationBefore) {
+    throw new Error("Destination beneficiary balance did not increase within the polling window.");
   }
+  console.log(`Verified contract-origin XCM precompile transfer for request ${requestId}`);
 
   await hubApi.disconnect();
-  await peopleApi.disconnect();
+  await shibuyaApi.disconnect();
 }
 
 main().catch((error) => {

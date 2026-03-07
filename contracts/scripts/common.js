@@ -33,23 +33,36 @@ export const NETWORKS = {
   polkadotTestnet: {
     key: "polkadotTestnet",
     rpcUrl: process.env.POLKADOT_RPC_URL ?? "https://services.polkadothub-rpc.com/testnet",
-    wsUrl: process.env.POLKADOT_WS_URL ?? "wss://testnet-passet-hub.polkadot.io",
+    wsUrls: (process.env.POLKADOT_WS_URL
+      ? process.env.POLKADOT_WS_URL.split(",")
+      : [
+        "wss://asset-hub-paseo-rpc.n.dwellir.com",
+        "wss://testnet-passet-hub.polkadot.io",
+        "wss://pas-rpc.stakeworld.io/assethub"
+      ]).map((url) => url.trim()).filter(Boolean),
     chainId: 420420417,
     label: "Polkadot Hub Testnet"
   },
   moonbaseAlpha: {
     key: "moonbaseAlpha",
     rpcUrl: process.env.MOONBASE_RPC_URL ?? "https://rpc.api.moonbase.moonbeam.network",
-    wsUrl: process.env.MOONBASE_WS_URL ?? "wss://wss.api.moonbase.moonbeam.network",
+    wsUrls: [process.env.MOONBASE_WS_URL ?? "wss://wss.api.moonbase.moonbeam.network"],
     chainId: 1287,
     label: "Moonbase Alpha"
   },
   peoplePaseo: {
     key: "peoplePaseo",
     rpcUrl: process.env.PEOPLE_PASEO_RPC_URL ?? "https://people-paseo.dotters.network",
-    wsUrl: process.env.PEOPLE_PASEO_WS_URL ?? "wss://people-paseo.rpc.amforc.com",
+    wsUrls: [process.env.PEOPLE_PASEO_WS_URL ?? "wss://people-paseo.rpc.amforc.com"],
     chainId: 0,
     label: "People Chain Paseo"
+  },
+  shibuyaAstar: {
+    key: "shibuyaAstar",
+    rpcUrl: process.env.SHIBUYA_RPC_URL ?? "https://evm.shibuya.astar.network",
+    wsUrls: [process.env.SHIBUYA_WS_URL ?? "wss://rpc.shibuya.astar.network"],
+    chainId: 81,
+    label: "Shibuya"
   }
 };
 
@@ -65,6 +78,7 @@ export const PAS_REMOTE_FEE = BigInt(process.env.XCM_REMOTE_FEE_AMOUNT ?? "10000
 export const PAS_LOCAL_FEE = BigInt(process.env.XCM_LOCAL_FEE_AMOUNT ?? "100000000");
 const SUBSTRATE_WS_RETRIES = Number.parseInt(process.env.SUBSTRATE_WS_RETRIES ?? "3", 10);
 const SUBSTRATE_WS_RETRY_DELAY_MS = Number.parseInt(process.env.SUBSTRATE_WS_RETRY_DELAY_MS ?? "1500", 10);
+const SUBSTRATE_WS_CONNECT_TIMEOUT_MS = Number.parseInt(process.env.SUBSTRATE_WS_CONNECT_TIMEOUT_MS ?? "12000", 10);
 
 function chainConfig(name) {
   const config = NETWORKS[name];
@@ -132,17 +146,35 @@ export function deriveSiblingSovereignAccount(paraId) {
 
 export async function createSubstrateApi(networkName) {
   let lastError;
+  const urls = NETWORKS[networkName].wsUrls;
 
-  for (let attempt = 1; attempt <= SUBSTRATE_WS_RETRIES; attempt += 1) {
-    try {
-      const provider = new WsProvider(NETWORKS[networkName].wsUrl);
-      const api = await ApiPromise.create({ provider });
-      await api.isReady;
-      return api;
-    } catch (error) {
-      lastError = error;
-      if (attempt < SUBSTRATE_WS_RETRIES) {
-        await new Promise((resolve) => setTimeout(resolve, SUBSTRATE_WS_RETRY_DELAY_MS * attempt));
+  for (const url of urls) {
+    for (let attempt = 1; attempt <= SUBSTRATE_WS_RETRIES; attempt += 1) {
+      let provider;
+
+      try {
+        provider = new WsProvider(url);
+        const api = await Promise.race([
+          ApiPromise.create({ provider }),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`Timed out connecting to ${url}`)), SUBSTRATE_WS_CONNECT_TIMEOUT_MS)
+          )
+        ]);
+        await Promise.race([
+          api.isReady,
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error(`Timed out waiting for api.isReady on ${url}`)), SUBSTRATE_WS_CONNECT_TIMEOUT_MS)
+          )
+        ]);
+        return api;
+      } catch (error) {
+        lastError = error;
+        try {
+          provider?.disconnect();
+        } catch {}
+        if (attempt < SUBSTRATE_WS_RETRIES) {
+          await new Promise((resolve) => setTimeout(resolve, SUBSTRATE_WS_RETRY_DELAY_MS * attempt));
+        }
       }
     }
   }
@@ -417,7 +449,7 @@ export function beneficiarySs58(value, prefix = 0) {
   return encodeAddress(beneficiaryAccountHex(value), prefix);
 }
 
-export function buildPeopleChainTeleportMessage(
+export function buildParachainTeleportMessage(
   hubApi,
   paraId,
   beneficiary,
@@ -499,6 +531,140 @@ export function buildPeopleChainTeleportMessage(
                     ]
                   }
                 }
+              }
+            }
+          ],
+          assets: [
+            {
+              Teleport: {
+                Wild: {
+                  AllCounted: 1
+                }
+              }
+            }
+          ]
+        }
+      }
+    ],
+    xcmVersion
+  );
+}
+
+export function buildPeopleChainTeleportMessage(hubApi, paraId, beneficiary, options = {}) {
+  return buildParachainTeleportMessage(hubApi, paraId, beneficiary, options);
+}
+
+export function buildReserveTransferMessage(
+  hubApi,
+  paraId,
+  beneficiary,
+  {
+    assetHubParaId = 1000,
+    amount = 10n * PAS_UNITS,
+    localFee = 1n * PAS_UNITS,
+    remoteExecutionFee = 100_000_000n,
+    xcmVersion = DEFAULT_XCM_VERSION
+  } = {}
+) {
+  const teleportFeeAsset = {
+    id: {
+      parents: 1,
+      interior: { Here: null }
+    },
+    fun: {
+      Fungible: localFee
+    }
+  };
+
+  return encodeVersionedXcm(
+    hubApi,
+    [
+      {
+        WithdrawAsset: [
+          {
+            id: {
+              parents: 1,
+              interior: { Here: null }
+            },
+            fun: {
+              Fungible: amount
+            }
+          }
+        ]
+      },
+      {
+        PayFees: {
+          asset: teleportFeeAsset
+        }
+      },
+      {
+        InitiateTransfer: {
+          destination: {
+            parents: 1,
+            interior: {
+              X1: [{ Parachain: assetHubParaId }]
+            }
+          },
+          remote_fees: {
+            Teleport: {
+              Definite: [teleportFeeAsset]
+            }
+          },
+          preserve_origin: false,
+          remote_xcm: [
+            {
+              DepositReserveAsset: {
+                assets: {
+                  Wild: {
+                    AllCounted: 1
+                  }
+                },
+                dest: {
+                  parents: 1,
+                  interior: {
+                    X1: [{ Parachain: paraId }]
+                  }
+                },
+                xcm: [
+                  {
+                    BuyExecution: {
+                      fees: {
+                        id: {
+                          parents: 1,
+                          interior: { Here: null }
+                        },
+                        fun: {
+                          Fungible: remoteExecutionFee
+                        }
+                      },
+                      weight_limit: {
+                        Unlimited: null
+                      }
+                    }
+                  },
+                  {
+                    DepositAsset: {
+                      assets: {
+                        Wild: {
+                          AllCounted: 1
+                        }
+                      },
+                      beneficiary: {
+                        parents: 0,
+                        interior: {
+                          X1: [
+                            {
+                              AccountId32: {
+                                network: null,
+                                id: beneficiaryAccountHex(beneficiary)
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  }
+                ]
               }
             }
           ],

@@ -10,7 +10,12 @@ This workspace implements the MVP blockchain layer described in the hackathon do
   - XCM precompile: `0x00000000000000000000000000000000000a0000`
 - `peoplePaseo`
   - WS: `wss://people-paseo.rpc.amforc.com`
-  - Para ID: resolved live during deploy
+  - Para ID: `1004`
+- `shibuyaAstar`
+  - RPC: `https://evm.shibuya.astar.network`
+  - WS: `wss://rpc.shibuya.astar.network`
+  - Chain ID: `81`
+  - Para ID: `2000`
 
 ## Contracts
 
@@ -48,10 +53,15 @@ For the live deployed smoke test, these env vars are the important ones:
 - `POLKADOT_WS_URL` required for Substrate/XCM metadata access
 - `PEOPLE_PASEO_WS_URL` required for destination-chain verification
 - `PEOPLE_PASEO_BENEFICIARY` optional destination account for the smoke transfer
+- `SHIBUYA_RPC_URL` optional override for Astar Shibuya EVM RPC
+- `SHIBUYA_WS_URL` required for Shibuya destination-chain verification
+- `SHIBUYA_BENEFICIARY` optional destination account for the Shibuya smoke transfer
 - `XCM_VERSION` optional XCM version for the live payload, default `5`
 - `XCM_TRANSFER_AMOUNT` amount transferred from Hub to People Chain
 - `XCM_LOCAL_FEE_AMOUNT` Hub-side XCM execution fee budget
 - `XCM_REMOTE_FEE_AMOUNT` People Chain fee budget
+- `XCM_DESTINATION_PARA_ID` optional destination override, default `1004` for People test and `2000` for Shibuya test
+- `XCM_MIN_DISPATCHER_EVM_BALANCE` minimum native balance the dispatcher contract should hold before execute
 - `SUBSTRATE_WS_RETRIES` optional retry count for Substrate WS connects
 - `SUBSTRATE_WS_RETRY_DELAY_MS` optional retry backoff base in milliseconds
 
@@ -78,14 +88,21 @@ Run:
 npm run test:deployed
 ```
 
+For the Shibuya variant:
+
+```bash
+npm run test:deployed:shibuya
+```
+
 The script:
 
 - loads the saved Hub deployment manifest
-- builds a real SCALE-encoded V5 XCM program
+- builds a real SCALE-encoded V5 XCM transfer program
 - submits a contract-origin `execute(...)` transaction through the real Hub XCM precompile
-- verifies the deployed contract wallet can execute the precompile successfully on-chain
+- tops up the dispatcher contract's EVM balance if needed
+- polls the destination chain and checks that the beneficiary balance increased
 
-The local unit tests still use mocks. The deployed smoke path uses the real Hub XCM precompile from the deployed contract wallet. It is a contract-origin precompile smoke test, not an end-to-end destination-chain integration test.
+The local unit tests still use mocks. The deployed smoke paths use the real Hub XCM precompile from the deployed contract wallet.
 
 ## Deployment outputs
 
