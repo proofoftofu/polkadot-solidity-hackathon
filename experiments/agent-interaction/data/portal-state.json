@@ -1,0 +1,45 @@
+{
+  "requests": [
+    {
+      "id": "req_34ebf4c9b679",
+      "agentName": "codex-agent",
+      "requestedAction": "wallet.sendTestToken",
+      "status": "approved",
+      "createdAt": "2026-03-07T03:12:04.691Z",
+      "updatedAt": "2026-03-07T03:12:25.860Z",
+      "sessionId": "session_a237f9ccf446"
+    }
+  ],
+  "sessions": [
+    {
+      "id": "session_a237f9ccf446",
+      "requestId": "req_34ebf4c9b679",
+      "agentName": "codex-agent",
+      "allowedAction": "wallet.sendTestToken",
+      "status": "active",
+      "token": "sess_ef34cb25213af628276f7348",
+      "approvedAt": "2026-03-07T03:12:25.861Z",
+      "lastExecution": "2026-03-07T03:12:48.665Z"
+    }
+  ],
+  "executions": [
+    {
+      "id": "exec_e52d752e00f6",
+      "sessionId": "session_a237f9ccf446",
+      "command": "wallet.sendTestToken",
+      "payload": {
+        "amount": "10",
+        "recipient": "5FdemoRecipient11111111111111111111111"
+      },
+      "executedAt": "2026-03-07T03:12:48.665Z",
+      "result": {
+        "summary": "Sponsored transfer simulated",
+        "transfer": {
+          "amount": "10",
+          "recipient": "5FdemoRecipient11111111111111111111111",
+          "txHash": "0x1d9242553d369404b2e8b12f7a888d23"
+        }
+      }
+    }
+  ]
+}
