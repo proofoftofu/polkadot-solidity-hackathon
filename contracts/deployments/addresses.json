@@ -1,11 +1,11 @@
 {
   "polkadotTestnet": {
-    "entryPoint": "0xf1Db8323ba91C6777C8Db4B04d46A7db8861c022",
-    "walletFactory": "0x556ba4e0062DF7cCEC1474DC51427f5a9D4fcef3",
-    "sessionKeyValidatorModule": "0x2d4385A435dA695A1eedbd75A4B880320aD26BE1",
-    "executionModule": "0x4EF1ac5B6290BFB26668A736741d5aFCfedbA782",
-    "sponsoredExecutionPaymaster": "0xFE8b443A8bbee2BA29dAE9ce96664037E6ff2763",
-    "crossChainDispatcher": "0xEf8C32456E3b0b334CcFba60923619B76525E4EA",
+    "entryPoint": "0xB5193b159c8A0650cbDC236772EeB0b96f49797e",
+    "walletFactory": "0xbf6FA55568472D73718d2A9cc8B98fA3d5913ebd",
+    "sessionKeyValidatorModule": "0xc5a25823e8b1028512210739bE00c23c4EcF22f6",
+    "executionModule": "0x1f8fA985700C959450Ab22911c45A06638e7b45A",
+    "sponsoredExecutionPaymaster": "0x70B83b09Fd0a17c7ce27F7d30A351f10fDa2D027",
+    "crossChainDispatcher": "0xA66d8da034F503D8fbD1e9178674C275F881CFd7",
     "xcmPrecompile": "0x00000000000000000000000000000000000a0000"
   },
   "peoplePaseo": {

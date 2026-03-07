@@ -89,14 +89,28 @@ For raw owner-only fallback:
 
 ## App integration flow
 
+The canonical end-to-end implementation for app-side integration is:
+- `contracts/scripts/integration-userop-xcm.js`
+
+If you are building the app client or another agent integration, use that file as the primary reference. It contains the full live flow:
+- predict wallet
+- deploy wallet through first userOp `initCode`
+- install session policy in the bootstrap userOp
+- fund wallet and dispatcher
+- fund the dispatcher-derived Substrate account
+- build the session-signed second userOp
+- execute the XCM transfer through EntryPoint
+- wait for the People Chain balance increase
+
 The intended app flow is:
 
 1. Predict wallet address with `WalletFactory.predictWallet(owner)`.
 2. Submit the first userOp with `initCode` so the entry point deploys the wallet.
 3. In that first userOp, call `bootstrapInstallModule(...)` to install `SessionKeyValidatorModule`.
 4. Approve a session by encoding and installing the validator session policy.
-5. The session key then calls `executeSession(...)` on the validator, which routes execution through the wallet.
-6. The wallet executes `CrossChainDispatcher.executeProgram(...)`.
+5. Build a second userOp signed by the session key.
+6. Execute that second userOp through `EntryPoint.handleOps(...)`.
+7. The wallet executes `CrossChainDispatcher.executeProgram(...)`.
 7. The dispatcher builds the XCM bytes on-chain and calls the real Hub XCM precompile.
 
 ### First userOp deployment
@@ -239,14 +253,20 @@ The app should:
 1. build the typed `XcmProgram`
 2. ABI-encode `CrossChainDispatcher.executeProgram(requestId, program)`
 3. wrap that in wallet single-execution calldata
-4. call `SessionKeyValidatorModule.executeSession(...)` from the session key
+4. build a session-signed userOp targeting wallet `execute(...)`
+5. submit that userOp through `EntryPoint.handleOps(...)`
 
 Reference code:
 - program execution encoding:
   - `contracts/test/AgentSmartWallet.js`
   - `encodeProgramExecution(...)`
+- session-signed userOp builder:
+  - `contracts/scripts/integration-userop-xcm.js`
+  - `buildSessionUserOp(...)`
 - live deployed XCM call:
   - `contracts/scripts/test-deployed-xcm.js`
+- full initCode bootstrap + session userOp integration:
+  - `contracts/scripts/integration-userop-xcm.js`
 
 ## Environment
 
@@ -266,6 +286,13 @@ Current relevant env vars:
 - `PEOPLE_PASEO_REMOTE_FEE_AMOUNT`
 - `XCM_TRANSFER_AMOUNT`
 - `XCM_MIN_DISPATCHER_EVM_BALANCE`
+- `INTEGRATION_WALLET_EVM_BALANCE`
+- `INTEGRATION_DISPATCHER_EVM_BALANCE`
+- `INTEGRATION_DISPATCHER_DERIVED_MIN_BALANCE`
+- `INTEGRATION_DISPATCHER_DERIVED_TOP_UP`
+
+The integration script derives its own session key deterministically when `SESSION_PRIVATE_KEY` is unset.
+The integration script also generates a fresh integration owner when `INTEGRATION_OWNER_PRIVATE_KEY` is unset so repeated runs can still exercise the first-userOp `initCode` deployment path.
 
 ## Commands
 
@@ -285,6 +312,12 @@ Live Hub -> People XCM verification:
 
 ```bash
 npm run test:deployed:xcm
+```
+
+Full userOp integration flow:
+
+```bash
+npm run test:integration:userop:xcm
 ```
 
 ## Current verified live behavior

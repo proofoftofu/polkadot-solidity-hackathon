@@ -10,6 +10,7 @@
     "deploy:polkadot": "hardhat run scripts/deploy.js --network polkadotTestnet",
     "deploy:all": "node scripts/deploy-all.js",
     "test:deployed:xcm": "node scripts/test-deployed-xcm.js",
+    "test:integration:userop:xcm": "node scripts/integration-userop-xcm.js",
     "export:artifacts": "hardhat run scripts/export-artifacts.js --network hardhatMainnet"
   },
   "devDependencies": {
