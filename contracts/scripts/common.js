@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import dotenv from "dotenv";
 import {
   createPublicClient,
   createWalletClient,
@@ -12,6 +13,8 @@ import {
   stringToHex
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+
+dotenv.config({ path: path.join(process.cwd(), ".env") });
 
 const ROOT = process.cwd();
 const ARTIFACTS_DIR = path.join(ROOT, "artifacts", "contracts");
@@ -119,15 +122,4 @@ export function buildMoonbeamDestination(accountKey20) {
     parseAbiParameters("uint8 parents, uint32 paraId, bytes20 accountKey20"),
     [1, 2004, getAddress(accountKey20)]
   );
-}
-
-export function buildRemoteCall(targetAbi, targetAddress, memo, requestId, receiverAddress) {
-  return {
-    destinationChainId: 1287n,
-    receiver: getAddress(receiverAddress),
-    target: getAddress(targetAddress),
-    value: 0n,
-    callData: encodeAbiParameters(parseAbiParameters("bytes32 memo"), [memo]),
-    requestId
-  };
 }

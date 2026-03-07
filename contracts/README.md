@@ -27,7 +27,11 @@ The cross-chain dispatcher is wired to the real Polkadot Hub XCM precompile shap
 
 ## Setup
 
-Set `PRIVATE_KEY` in Hardhat config variables or as an environment variable, then use:
+Copy `.env.example` to `.env` and fill in the values you need.
+
+Hardhat and the standalone scripts now load `.env` via `dotenv`.
+
+You can still use Hardhat config vars if you want, but `.env` is the default path:
 
 ```bash
 npx hardhat vars set PRIVATE_KEY
