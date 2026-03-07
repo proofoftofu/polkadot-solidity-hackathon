@@ -2,6 +2,8 @@ import { createPublicClient, createWalletClient, getContract, http } from "viem"
 import { privateKeyToAccount } from "viem/accounts";
 
 const account = privateKeyToAccount(process.env.PRIVATE_KEY);
+console.log("address: ", account.address);
+
 const chain = {
   id: 420420417,
   name: "Polkadot Hub Testnet",
@@ -68,7 +70,7 @@ const xcm = getContract({
 });
 
 const message =
-  "0x050c000401000003008c86471301000003008c8647000d010101000000010100368e8759910dab756d344995f1d3c79374ca8f70066d3a709e48029f6bf0ee7e";
+  "0x050c00040100000700e40b54023001000002286bee31010100a90f0100000401000002286bee000400010204040d010204000101008eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48";
 
 async function main() {
   const weight = await xcm.read.weighMessage([message]);

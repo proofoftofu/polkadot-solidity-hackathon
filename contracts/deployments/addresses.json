@@ -1,11 +1,11 @@
 {
   "polkadotTestnet": {
-    "entryPoint": "0xfdfC463D4bC44ff4A27FeDdAf012dC3cDF5C016c",
-    "walletFactory": "0xf8aCF7F98ff599f3DB85Aa76225CD79384f2e1aF",
-    "sessionKeyValidatorModule": "0x4B33eDE8c5Ed2816e65EAf2590E14Aa29410de46",
-    "executionModule": "0x2587E8527E767465213B2d7d626F78737DaFafc0",
-    "sponsoredExecutionPaymaster": "0xCf43A30783a1c8558c0359F90e3EF89bA3aB473B",
-    "crossChainDispatcher": "0xc01BD30e4a97A0d0a889BB2534cF437951001f8C",
+    "entryPoint": "0xc8bC86006B5E32416ca119eea333AaC3Cd5Cb398",
+    "walletFactory": "0x90f9aC4daF57EB359B4863E13b9391475aCe8BF2",
+    "sessionKeyValidatorModule": "0x6De3E206e7d6D5aF6aAB3547196dD37F1eeAFbaa",
+    "executionModule": "0xB5F0c935df0e083eB22ed168107Aecae791e72dd",
+    "sponsoredExecutionPaymaster": "0xafa731ad422dbFf65796b00CA04575d26Ff5E7D7",
+    "crossChainDispatcher": "0x4C4325c887165A64AD6384dB9f7EF490D154989F",
     "xcmPrecompile": "0x00000000000000000000000000000000000a0000"
   },
   "moonbaseAlpha": {
