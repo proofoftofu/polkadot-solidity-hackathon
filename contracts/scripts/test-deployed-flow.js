@@ -97,7 +97,7 @@ async function main() {
   const minimumDispatcherEvmBalance = BigInt(
     process.env.XCM_MIN_DISPATCHER_EVM_BALANCE ?? "1000000000000000000"
   );
-  const paraId = Number.parseInt(process.env.XCM_DESTINATION_PARA_ID ?? "1002", 10);
+  const paraId = Number.parseInt(process.env.XCM_DESTINATION_PARA_ID ?? "1004", 10);
   const beneficiary =
     process.env.XCM_TEST_BENEFICIARY
     ?? "0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48";
