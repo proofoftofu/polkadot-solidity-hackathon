@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { ApiPromise, WsProvider } from "@polkadot/api";
+import { decodeAddress, encodeAddress } from "@polkadot/util-crypto";
 import dotenv from "dotenv";
 import solc from "solc";
 import {
@@ -42,6 +43,13 @@ export const NETWORKS = {
     wsUrl: process.env.MOONBASE_WS_URL ?? "wss://wss.api.moonbase.moonbeam.network",
     chainId: 1287,
     label: "Moonbase Alpha"
+  },
+  peoplePaseo: {
+    key: "peoplePaseo",
+    rpcUrl: process.env.PEOPLE_PASEO_RPC_URL ?? "https://people-paseo.dotters.network",
+    wsUrl: process.env.PEOPLE_PASEO_WS_URL ?? "wss://people-paseo.rpc.amforc.com",
+    chainId: 0,
+    label: "People Chain Paseo"
   }
 };
 
@@ -52,6 +60,9 @@ export const DEFAULT_TRANSACT_GAS_LIMIT = BigInt(process.env.XCM_TRANSACT_GAS_LI
 export const DEFAULT_TRANSACT_REF_TIME = BigInt(process.env.XCM_TRANSACT_REF_TIME ?? "5000000000");
 export const DEFAULT_TRANSACT_PROOF_SIZE = BigInt(process.env.XCM_TRANSACT_PROOF_SIZE ?? "200000");
 export const DEFAULT_XCM_VERSION = Number.parseInt(process.env.XCM_VERSION ?? "5", 10);
+export const PAS_UNITS = BigInt(process.env.XCM_TRANSFER_AMOUNT ?? "10000000000");
+export const PAS_REMOTE_FEE = BigInt(process.env.XCM_REMOTE_FEE_AMOUNT ?? "100000000");
+export const PAS_LOCAL_FEE = BigInt(process.env.XCM_LOCAL_FEE_AMOUNT ?? "100000000");
 const SUBSTRATE_WS_RETRIES = Number.parseInt(process.env.SUBSTRATE_WS_RETRIES ?? "3", 10);
 const SUBSTRATE_WS_RETRY_DELAY_MS = Number.parseInt(process.env.SUBSTRATE_WS_RETRY_DELAY_MS ?? "1500", 10);
 
@@ -228,6 +239,17 @@ export async function writeContract(contractWrite, args, publicClient, nonceMana
   return publicClient.waitForTransactionReceipt({ hash });
 }
 
+export async function sendNative(walletClient, publicClient, nonceManager, to, value) {
+  const hash = await walletClient.sendTransaction({
+    account: walletClient.account,
+    chain: walletClient.chain,
+    nonce: nonceManager ? await nonceManager.next() : undefined,
+    to,
+    value
+  });
+  return publicClient.waitForTransactionReceipt({ hash });
+}
+
 export async function getContract(walletClient, publicClient, artifact, address) {
   return viemGetContract({
     abi: artifact.abi,
@@ -252,7 +274,7 @@ export async function writeDeployment(networkName, deployment) {
 
 export async function updateAddressesIndex(networkName, deployment) {
   const file = path.join(DEPLOYMENTS_DIR, "addresses.json");
-  let index = { polkadotTestnet: {}, moonbaseAlpha: {} };
+  let index = { polkadotTestnet: {}, moonbaseAlpha: {}, peoplePaseo: {} };
   try {
     index = JSON.parse(await fs.readFile(file, "utf8"));
   } catch {}
@@ -382,6 +404,169 @@ export function buildMoonbeamExecutionMessage(
 
 export async function getHubParaId(hubApi) {
   return Number((await hubApi.query.parachainInfo.parachainId()).toString());
+}
+
+export function beneficiaryAccountHex(value) {
+  if (value.startsWith("0x")) {
+    return value.toLowerCase();
+  }
+  return toHex(decodeAddress(value));
+}
+
+export function beneficiarySs58(value, prefix = 0) {
+  return encodeAddress(beneficiaryAccountHex(value), prefix);
+}
+
+export function buildPeopleChainTeleportMessage(
+  hubApi,
+  paraId,
+  beneficiary,
+  {
+    amount = PAS_UNITS,
+    localFee = PAS_LOCAL_FEE,
+    remoteFee = PAS_REMOTE_FEE,
+    xcmVersion = DEFAULT_XCM_VERSION
+  } = {}
+) {
+  const asset = {
+    id: {
+      parents: 0,
+      interior: "Here"
+    },
+    fun: {
+      Fungible: amount
+    }
+  };
+  const feeAsset = {
+    id: {
+      parents: 0,
+      interior: "Here"
+    },
+    fun: {
+      Fungible: remoteFee
+    }
+  };
+
+  return encodeVersionedXcm(
+    hubApi,
+    [
+      { WithdrawAsset: [asset] },
+      {
+        PayFees: {
+          asset: {
+            id: {
+              parents: 0,
+              interior: "Here"
+            },
+            fun: {
+              Fungible: localFee
+            }
+          }
+        }
+      },
+      {
+        InitiateTransfer: {
+          destination: {
+            parents: 0,
+            interior: {
+              X1: [{ Parachain: paraId }]
+            }
+          },
+          remoteFees: {
+            Teleport: {
+              Definite: [feeAsset]
+            }
+          },
+          preserveOrigin: false,
+          remoteXcm: [
+            {
+              DepositAsset: {
+                assets: {
+                  Wild: {
+                    AllCounted: 1
+                  }
+                },
+                beneficiary: {
+                  parents: 0,
+                  interior: {
+                    X1: [
+                      {
+                        AccountId32: {
+                          network: null,
+                          id: beneficiaryAccountHex(beneficiary)
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          assets: [
+            {
+              Teleport: {
+                Wild: {
+                  AllCounted: 1
+                }
+              }
+            }
+          ]
+        }
+      }
+    ],
+    xcmVersion
+  );
+}
+
+export async function ensureNativeBalance(
+  clientBundle,
+  address,
+  { minBalance, topUpBalance } = {}
+) {
+  const currentBalance = await clientBundle.publicClient.getBalance({ address });
+  if (minBalance !== undefined && currentBalance >= minBalance) {
+    return { funded: false, balance: currentBalance };
+  }
+
+  const targetBalance = topUpBalance ?? minBalance;
+  if (targetBalance === undefined || targetBalance <= currentBalance) {
+    return { funded: false, balance: currentBalance };
+  }
+
+  await sendNative(
+    clientBundle.walletClient,
+    clientBundle.publicClient,
+    clientBundle.nonceManager,
+    address,
+    targetBalance - currentBalance
+  );
+
+  return {
+    funded: true,
+    balance: await clientBundle.publicClient.getBalance({ address })
+  };
+}
+
+export async function readSystemFreeBalance(api, accountId) {
+  const account = await api.query.system.account(beneficiaryAccountHex(accountId));
+  const data = account.toJSON()?.data ?? account.toHuman()?.data;
+  return BigInt(data.free.toString().replace(/,/g, ""));
+}
+
+export async function waitForSystemFreeBalanceIncrease(api, accountId, initialBalance) {
+  const timeoutMs = Number.parseInt(process.env.XCM_RESULT_TIMEOUT_MS ?? "180000", 10);
+  const pollMs = Number.parseInt(process.env.XCM_RESULT_POLL_MS ?? "5000", 10);
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const balance = await readSystemFreeBalance(api, accountId);
+    if (balance > initialBalance) {
+      return balance;
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+
+  throw new Error("Timed out waiting for destination balance increase.");
 }
 
 export async function ensureMoonbeamSovereignBalance(

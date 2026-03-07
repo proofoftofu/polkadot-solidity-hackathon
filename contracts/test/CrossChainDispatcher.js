@@ -68,6 +68,16 @@ describe("CrossChainDispatcher", async function () {
     assert.equal(await receiver.read.executedRequests([requestId]), true);
   });
 
+  it("executes a raw encoded XCM program through the precompile", async function () {
+    const { deployer, xcmPrecompile, dispatcher } = await deployFixture();
+    const requestId = stringToHex("req-exec", { size: 32 });
+    const encodedMessage = stringToHex("people-chain-teleport");
+    const weight = await dispatcher.read.estimateEncodedMessageWeight([encodedMessage]);
+
+    await dispatcher.write.executeEncodedMessage([requestId, encodedMessage, weight], { account: deployer.account });
+    assert.equal((await xcmPrecompile.getEvents.XcmExecuted()).length > 0, true);
+  });
+
   it("rejects unsupported receivers and direct calls on the Moonbeam-side receiver", async function () {
     const { deployer, dispatcher, receiver, target } = await deployFixture();
     const requestId = stringToHex("req-2", { size: 32 });

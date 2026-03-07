@@ -1,13 +1,11 @@
 import {
-  DEFAULT_MOONBASE_PARA_ID,
   NETWORKS,
   XCM_PRECOMPILE,
+  beneficiarySs58,
   createClients,
   createSubstrateApi,
   deployFromArtifact,
-  encodeVersionedLocation,
   getContract,
-  getHubParaId,
   readArtifact,
   updateAddressesIndex,
   writeContract,
@@ -23,8 +21,6 @@ async function deployPolkadotHub() {
   const executionArtifact = await readArtifact("ExecutionModule.sol", "ExecutionModule");
   const paymasterArtifact = await readArtifact("SponsoredExecutionPaymaster.sol", "SponsoredExecutionPaymaster");
   const dispatcherArtifact = await readArtifact("CrossChainDispatcher.sol", "CrossChainDispatcher");
-  const hubApi = await createSubstrateApi("polkadotTestnet");
-  const moonbeamApi = await createSubstrateApi("moonbaseAlpha");
 
   const entryPoint = await deployFromArtifact(walletClient, publicClient, entryPointArtifact, [], nonceManager);
   const walletFactory =
@@ -40,14 +36,11 @@ async function deployPolkadotHub() {
     [account.address, entryPoint],
     nonceManager
   );
-
-  const moonbaseParaId = await getHubParaId(moonbeamApi);
-  const moonbeamDestination = encodeVersionedLocation(hubApi, moonbaseParaId, 1);
   const crossChainDispatcher = await deployFromArtifact(
     walletClient,
     publicClient,
     dispatcherArtifact,
-    [account.address, XCM_PRECOMPILE, BigInt(NETWORKS.moonbaseAlpha.chainId), moonbeamDestination],
+    [account.address, XCM_PRECOMPILE, 0n, "0x"],
     nonceManager
   );
 
@@ -62,66 +55,58 @@ async function deployPolkadotHub() {
       executionModule,
       sponsoredExecutionPaymaster,
       crossChainDispatcher,
-      moonbeamDestination,
-      moonbaseParaId,
       xcmPrecompile: XCM_PRECOMPILE
     }
   };
 
-  await hubApi.disconnect();
-  await moonbeamApi.disconnect();
   await writeDeployment("polkadotTestnet", deployment);
   await updateAddressesIndex("polkadotTestnet", deployment);
   return deployment;
 }
 
-async function deployMoonbeam(hubDeployment) {
-  const { account, publicClient, walletClient, nonceManager } = createClients("moonbaseAlpha");
-
-  const targetArtifact = await readArtifact("mocks/MockTarget.sol", "MockTarget");
-  const crossChainTarget = await deployFromArtifact(walletClient, publicClient, targetArtifact, [], nonceManager);
-
-  const deployment = {
-    network: "moonbaseAlpha",
-    deployer: account.address,
-    chainId: NETWORKS.moonbaseAlpha.chainId,
-    contracts: {
-      crossChainTarget,
-      trustedHubDispatcher: hubDeployment.contracts.crossChainDispatcher
-    }
-  };
-
-  await writeDeployment("moonbaseAlpha", deployment);
-  await updateAddressesIndex("moonbaseAlpha", deployment);
-  return deployment;
-}
-
-async function configureHubAllowlist(hubDeployment, moonbeamDeployment) {
-  const { publicClient, walletClient, nonceManager } = createClients("polkadotTestnet");
+async function configurePeopleChainRoute(hubDeployment) {
+  const hub = createClients("polkadotTestnet");
+  const peopleApi = await createSubstrateApi("peoplePaseo");
   const dispatcherArtifact = await readArtifact("CrossChainDispatcher.sol", "CrossChainDispatcher");
   const dispatcher = await getContract(
-    walletClient,
-    publicClient,
+    hub.walletClient,
+    hub.publicClient,
     dispatcherArtifact,
     hubDeployment.contracts.crossChainDispatcher
   );
 
+  const beneficiary = process.env.PEOPLE_PASEO_BENEFICIARY
+    ?? "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
+  const peopleParaId = Number((await peopleApi.query.parachainInfo.parachainId()).toString());
+
   await writeContract(
     dispatcher.write.setAllowedReceiver,
-    [moonbeamDeployment.contracts.crossChainTarget, true],
-    publicClient,
-    nonceManager
+    [hubDeployment.deployer, true],
+    hub.publicClient,
+    hub.nonceManager
   );
+
+  const deployment = {
+    network: "peoplePaseo",
+    paraId: peopleParaId,
+    beneficiary,
+    beneficiarySs58: beneficiarySs58(beneficiary, 0)
+  };
+
+  await peopleApi.disconnect();
+  await writeDeployment("peoplePaseo", deployment);
+  await updateAddressesIndex("peoplePaseo", { contracts: deployment });
+  return deployment;
 }
 
 async function main() {
   const hubDeployment = await deployPolkadotHub();
-  const moonbeamDeployment = await deployMoonbeam(hubDeployment);
-  await configureHubAllowlist(hubDeployment, moonbeamDeployment);
+  const peopleDeployment = await configurePeopleChainRoute(hubDeployment);
 
-  console.log("Deployed contracts to both networks.");
+  console.log("Deployed Hub contracts and configured People Chain smoke test.");
   console.log(`Polkadot Hub dispatcher: ${hubDeployment.contracts.crossChainDispatcher}`);
-  console.log(`Moonbase target: ${moonbeamDeployment.contracts.crossChainTarget}`);
+  console.log(`People Chain paraId: ${peopleDeployment.paraId}`);
+  console.log(`People Chain beneficiary: ${peopleDeployment.beneficiarySs58}`);
 }
 
 main().catch((error) => {

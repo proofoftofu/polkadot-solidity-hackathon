@@ -8,10 +8,9 @@ This workspace implements the MVP blockchain layer described in the hackathon do
   - RPC: `https://services.polkadothub-rpc.com/testnet`
   - Chain ID: `420420417`
   - XCM precompile: `0x00000000000000000000000000000000000a0000`
-- `moonbaseAlpha`
-  - RPC: `https://rpc.api.moonbase.moonbeam.network`
-  - Chain ID: `1287`
-  - Explorer: `https://moonbase.moonscan.io`
+- `peoplePaseo`
+  - WS: `wss://people-paseo.rpc.amforc.com`
+  - Para ID: resolved live during deploy
 
 ## Contracts
 
@@ -21,9 +20,8 @@ This workspace implements the MVP blockchain layer described in the hackathon do
 - `ExecutionModule`
 - `SponsoredExecutionPaymaster`
 - `CrossChainDispatcher`
-- `MockTarget` on Moonbase Alpha for the deployed smoke test
 
-The cross-chain dispatcher is wired to the real Polkadot Hub XCM precompile shape. For local tests we swap in a mock precompile and mock Moonbeam router, while keeping the same dispatcher interface.
+The cross-chain dispatcher is wired to the real Polkadot Hub XCM precompile shape. For local tests we swap in a mock precompile and mock router. The deployed smoke test uses a real Hub-origin XCM execution to People Chain Paseo.
 
 ## Setup
 
@@ -43,25 +41,23 @@ You can still use Hardhat config vars if you want, but `.env` is the default pat
 npx hardhat vars set PRIVATE_KEY
 ```
 
-For live two-chain deployment, these env vars are the important ones:
+For the live deployed smoke test, these env vars are the important ones:
 
 - `PRIVATE_KEY`
 - `POLKADOT_RPC_URL` optional override
 - `POLKADOT_WS_URL` required for Substrate/XCM metadata access
-- `MOONBASE_RPC_URL` optional override
-- `MOONBASE_WS_URL` required for Moonbeam runtime metadata access
-- `MOONBASE_PARA_ID` optional override, default `1000`
+- `PEOPLE_PASEO_WS_URL` required for destination-chain verification
+- `PEOPLE_PASEO_BENEFICIARY` optional destination account for the smoke transfer
 - `XCM_VERSION` optional XCM version for the live payload, default `5`
-- `XCM_FEE_WEI` optional Moonbase fee amount for `BuyExecution`
-- `XCM_TRANSACT_GAS_LIMIT` optional Moonbeam EVM gas limit
-- `XCM_TRANSACT_REF_TIME` optional XCM transact ref time
-- `XCM_TRANSACT_PROOF_SIZE` optional XCM transact proof size
+- `XCM_TRANSFER_AMOUNT` amount transferred from Hub to People Chain
+- `XCM_LOCAL_FEE_AMOUNT` Hub-side XCM execution fee budget
+- `XCM_REMOTE_FEE_AMOUNT` People Chain fee budget
 - `SUBSTRATE_WS_RETRIES` optional retry count for Substrate WS connects
 - `SUBSTRATE_WS_RETRY_DELAY_MS` optional retry backoff base in milliseconds
 
-## Deploy Both Chains
+## Deploy
 
-Compile first, then deploy both networks with one script:
+Compile first, then deploy the Hub contracts and write the People Chain smoke-test manifest:
 
 ```bash
 npm run compile
@@ -71,18 +67,8 @@ npm run deploy:all
 This writes:
 
 - `deployments/polkadotTestnet.json`
-- `deployments/moonbaseAlpha.json`
+- `deployments/peoplePaseo.json`
 - `deployments/addresses.json`
-
-## Configure Hub
-
-If you deploy the two chains separately, run:
-
-```bash
-npm run configure:hub
-```
-
-That updates the Hub dispatcher allowlist to trust the deployed Moonbeam target.
 
 ## Test Deployed Flow
 
@@ -94,22 +80,13 @@ npm run test:deployed
 
 The script:
 
-- loads the saved Hub and Moonbeam deployment manifests
-- builds a real SCALE-encoded XCM program for Moonbase Alpha
-- submits a Hub dispatch transaction to the real Polkadot Hub XCM precompile-facing dispatcher
-- waits for the Moonbase target event and prints the Moonbase-side transaction hash
+- loads the saved Hub and People Chain deployment manifests
+- builds a real SCALE-encoded V5 XCM transfer program for People Chain Paseo
+- funds the dispatcher contract on Hub with enough PAS to execute the program
+- submits a Hub `execute(...)` transaction through the real XCM precompile
+- polls the destination beneficiary account until its People Chain balance increases
 
-The local unit tests still use mocks. The deployed smoke path is intended to use real XCM. If the Moonbase event never appears, the most likely issue is destination-side fee funding for the origin that executes the remote EVM call.
-
-## Moonbase Alpha wallet info
-
-Use this if you want to add the remote testnet to MetaMask manually:
-
-- Network Name: `Moonbase Alpha`
-- RPC URL: `https://rpc.api.moonbase.moonbeam.network`
-- Chain ID: `1287`
-- Currency Symbol: `DEV`
-- Block Explorer: `https://moonbase.moonscan.io`
+The local unit tests still use mocks. The deployed smoke path uses a real Hub-origin XCM route that is currently documented for Polkadot Hub TestNet.
 
 ## Deployment outputs
 

@@ -38,6 +38,9 @@ contract CrossChainDispatcher {
         bytes message
     );
     event RawXcmDispatched(address indexed target, bytes32 indexed requestId, bytes destination, bytes message);
+    event RawXcmExecuted(bytes32 indexed requestId, bytes message, uint64 refTime, uint64 proofSize);
+
+    receive() external payable {}
 
     constructor(address owner_, address xcmPrecompileAddress, uint256 destinationChainId_, bytes memory destination_) {
         owner = owner_;
@@ -103,6 +106,18 @@ contract CrossChainDispatcher {
 
         xcm.send(destination, encodedMessage);
         emit RawXcmDispatched(target, requestId, destination, encodedMessage);
+    }
+
+    function executeEncodedMessage(bytes32 requestId, bytes calldata encodedMessage, IXcm.Weight calldata weight)
+        external
+        onlyOwner
+    {
+        if (encodedMessage.length == 0) {
+            revert EmptyEncodedMessage();
+        }
+
+        xcm.execute(encodedMessage, weight);
+        emit RawXcmExecuted(requestId, encodedMessage, weight.refTime, weight.proofSize);
     }
 
     function _buildMessage(RemoteCall calldata remoteCall) internal view returns (bytes memory) {
