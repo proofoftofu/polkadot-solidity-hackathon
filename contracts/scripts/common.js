@@ -518,6 +518,14 @@ export function buildPeopleChainTeleportMessage(
   );
 }
 
+export function buildContractSmokeMessage(hubApi, { xcmVersion = DEFAULT_XCM_VERSION } = {}) {
+  return encodeVersionedXcm(
+    hubApi,
+    [{ ClearOrigin: null }],
+    xcmVersion
+  );
+}
+
 export async function ensureNativeBalance(
   clientBundle,
   address,

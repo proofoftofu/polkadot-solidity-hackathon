@@ -80,13 +80,12 @@ npm run test:deployed
 
 The script:
 
-- loads the saved Hub and People Chain deployment manifests
-- builds a real SCALE-encoded V5 XCM transfer program for People Chain Paseo
-- funds the dispatcher contract on Hub with enough PAS to execute the program
-- submits a Hub `execute(...)` transaction through the real XCM precompile
-- polls the destination beneficiary account until its People Chain balance increases
+- loads the saved Hub deployment manifest
+- builds a real SCALE-encoded V5 XCM program
+- submits a contract-origin `execute(...)` transaction through the real Hub XCM precompile
+- verifies the deployed contract wallet can execute the precompile successfully on-chain
 
-The local unit tests still use mocks. The deployed smoke path uses a real Hub-origin XCM route that is currently documented for Polkadot Hub TestNet.
+The local unit tests still use mocks. The deployed smoke path uses the real Hub XCM precompile from the deployed contract wallet. It is a contract-origin precompile smoke test, not an end-to-end destination-chain integration test.
 
 ## Deployment outputs
 
