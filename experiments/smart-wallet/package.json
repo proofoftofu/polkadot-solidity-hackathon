@@ -1,0 +1,16 @@
+{
+  "name": "smart-wallet-experiment",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test --no-compile",
+    "test:nodejs": "hardhat test nodejs"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox-viem": "^5.0.3",
+    "hardhat": "^3.1.11",
+    "solc": "^0.8.28"
+  }
+}
