@@ -53,14 +53,20 @@ For the live deployed smoke test, these env vars are the important ones:
 - `POLKADOT_WS_URL` required for Substrate/XCM metadata access
 - `PEOPLE_PASEO_WS_URL` required for destination-chain verification
 - `PEOPLE_PASEO_BENEFICIARY` optional destination account for the smoke transfer
+- `PEOPLE_PASEO_PARA_ID` optional People para ID override, default `1004`
+- `PEOPLE_PASEO_LOCAL_FEE_AMOUNT` optional People local fee budget, default `1000000000`
+- `PEOPLE_PASEO_REMOTE_FEE_AMOUNT` optional People remote fee budget, default `1000000000`
 - `SHIBUYA_RPC_URL` optional override for Astar Shibuya EVM RPC
 - `SHIBUYA_WS_URL` required for Shibuya destination-chain verification
 - `SHIBUYA_BENEFICIARY` optional destination account for the Shibuya smoke transfer
+- `SHIBUYA_PARA_ID` optional Shibuya para ID override, default `2000`
+- `SHIBUYA_LOCAL_FEE_AMOUNT` optional Shibuya local fee budget
+- `SHIBUYA_REMOTE_FEE_AMOUNT` optional Shibuya remote fee budget
+- `SHIBUYA_TRANSFER_AMOUNT` optional Shibuya transfer amount
 - `XCM_VERSION` optional XCM version for the live payload, default `5`
 - `XCM_TRANSFER_AMOUNT` amount transferred from Hub to People Chain
 - `XCM_LOCAL_FEE_AMOUNT` Hub-side XCM execution fee budget
 - `XCM_REMOTE_FEE_AMOUNT` People Chain fee budget
-- `XCM_DESTINATION_PARA_ID` optional destination override, default `1004` for People test and `2000` for Shibuya test
 - `XCM_MIN_DISPATCHER_EVM_BALANCE` minimum native balance the dispatcher contract should hold before execute
 - `SUBSTRATE_WS_RETRIES` optional retry count for Substrate WS connects
 - `SUBSTRATE_WS_RETRY_DELAY_MS` optional retry backoff base in milliseconds
@@ -85,13 +91,13 @@ This writes:
 Run:
 
 ```bash
-npm run test:deployed
+npm run test:deployed:xcm
 ```
 
 For the Shibuya variant:
 
 ```bash
-npm run test:deployed:shibuya
+npm run test:deployed:xcm:shibuya
 ```
 
 The script:

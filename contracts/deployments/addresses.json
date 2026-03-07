@@ -1,16 +1,12 @@
 {
   "polkadotTestnet": {
-    "entryPoint": "0xc8bC86006B5E32416ca119eea333AaC3Cd5Cb398",
-    "walletFactory": "0x90f9aC4daF57EB359B4863E13b9391475aCe8BF2",
-    "sessionKeyValidatorModule": "0x6De3E206e7d6D5aF6aAB3547196dD37F1eeAFbaa",
-    "executionModule": "0xB5F0c935df0e083eB22ed168107Aecae791e72dd",
-    "sponsoredExecutionPaymaster": "0xafa731ad422dbFf65796b00CA04575d26Ff5E7D7",
-    "crossChainDispatcher": "0x4C4325c887165A64AD6384dB9f7EF490D154989F",
+    "entryPoint": "0xFef0f7D0EF58982BBec216a1859F8dc1062A7C4c",
+    "walletFactory": "0x2C77c715DeDf78cfF7778a905dAfa627B09681CF",
+    "sessionKeyValidatorModule": "0x80378fbA044160a73a0495c1004a7cCB58f0bC16",
+    "executionModule": "0x5161EBD3642AfF794Dac31820CC3FC4D0858642E",
+    "sponsoredExecutionPaymaster": "0x2B0EA6328265517C1ebAE1944311f53deBA4b26d",
+    "crossChainDispatcher": "0x7a18cD264eD11812ef58aEa038da7bf20D666e7E",
     "xcmPrecompile": "0x00000000000000000000000000000000000a0000"
-  },
-  "moonbaseAlpha": {
-    "crossChainTarget": "0x24848EfF870f5cEe98B4410e4624CB97f4ecAE4A",
-    "trustedHubDispatcher": "0x2479CF332cE90b55EC8df97a8AD92b266f5AdA57"
   },
   "peoplePaseo": {
     "network": "peoplePaseo",

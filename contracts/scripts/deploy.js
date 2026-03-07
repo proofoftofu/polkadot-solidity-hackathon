@@ -2,9 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { network } from "hardhat";
-import { encodeAbiParameters, parseAbiParameters, stringToHex } from "viem";
 
-const MOONBASE_CHAIN_ID = 1287n;
 const POLKADOT_XCM_PRECOMPILE = "0x00000000000000000000000000000000000a0000";
 
 async function main() {
@@ -31,20 +29,11 @@ async function main() {
       client: { wallet: deployer }
     });
 
-    const moonbeamDestination =
-      process.env.MOONBEAM_DESTINATION ??
-      encodeAbiParameters(
-        parseAbiParameters("uint8 parents, uint32 paraId, bytes20 accountKey20"),
-        [1, 2004, deployer.account.address]
-      );
-    const messagePrefix = process.env.XCM_MESSAGE_PREFIX ?? stringToHex("TOFU_XCM_V1");
-
     const dispatcher = await viem.deployContract(
       "CrossChainDispatcher",
-      [deployer.account.address, POLKADOT_XCM_PRECOMPILE, MOONBASE_CHAIN_ID, moonbeamDestination],
+      [deployer.account.address, POLKADOT_XCM_PRECOMPILE],
       { client: { wallet: deployer } }
     );
-    await dispatcher.write.setMessagePrefix([messagePrefix], { account: deployer.account });
 
     deployment.contracts = {
       entryPoint: entryPoint.address,
@@ -53,24 +42,7 @@ async function main() {
       executionModule: executionModule.address,
       sponsoredExecutionPaymaster: paymaster.address,
       crossChainDispatcher: dispatcher.address,
-      moonbeamDestination,
-      xcmPrecompile: POLKADOT_XCM_PRECOMPILE,
-      messagePrefix
-    };
-  }
-
-  if (networkName === "moonbaseAlpha" || networkName === "hardhatMainnet") {
-    const trustedRelayer = process.env.MOONBEAM_TRUSTED_RELAYER ?? deployer.account.address;
-    const trustedDispatcher = process.env.TRUSTED_HUB_DISPATCHER ?? deployer.account.address;
-    const receiver = await viem.deployContract("CrossChainReceiver", [trustedRelayer, trustedDispatcher], {
-      client: { wallet: deployer }
-    });
-
-    deployment.contracts = {
-      ...deployment.contracts,
-      crossChainReceiver: receiver.address,
-      trustedRelayer,
-      trustedHubDispatcher: trustedDispatcher
+      xcmPrecompile: POLKADOT_XCM_PRECOMPILE
     };
   }
 

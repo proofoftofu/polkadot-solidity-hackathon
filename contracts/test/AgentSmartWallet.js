@@ -13,6 +13,7 @@ import {
   toHex,
   zeroHash
 } from "viem";
+import { deployFromArtifact, getContract, readArtifact } from "../scripts/common.js";
 
 const BASE_MODE = zeroHash;
 const ERC1271_MAGIC_VALUE = "0x1626ba7e";
@@ -107,27 +108,60 @@ describe("AgentSmartWallet", async function () {
 
   async function deployFixture() {
     const [deployer, owner, sponsor, agent] = await viem.getWalletClients();
-    const target = await viem.deployContract("MockTarget", [], { client: { wallet: deployer } });
-    const entryPoint = await viem.deployContract("MockEntryPoint", [], { client: { wallet: deployer } });
-    const walletFactory = await viem.deployContract("WalletFactory", [entryPoint.address], {
-      client: { wallet: deployer }
-    });
+    const publicClient = await viem.getPublicClient();
+    const targetArtifact = await readArtifact("mocks/MockTarget.sol", "MockTarget");
+    const entryPointArtifact = await readArtifact("mocks/MockEntryPoint.sol", "MockEntryPoint");
+    const walletFactoryArtifact = await readArtifact("WalletFactory.sol", "WalletFactory");
+    const walletArtifact = await readArtifact("AgentSmartWallet.sol", "AgentSmartWallet");
+    const validatorArtifact = await readArtifact("SessionKeyValidatorModule.sol", "SessionKeyValidatorModule");
+    const executorArtifact = await readArtifact("ExecutionModule.sol", "ExecutionModule");
+    const paymasterArtifact = await readArtifact("SponsoredExecutionPaymaster.sol", "SponsoredExecutionPaymaster");
+
+    const targetAddress = await deployFromArtifact(deployer, publicClient, targetArtifact, []);
+    const entryPointAddress = await deployFromArtifact(deployer, publicClient, entryPointArtifact, []);
+    const walletFactoryAddress = await deployFromArtifact(
+      deployer,
+      publicClient,
+      walletFactoryArtifact,
+      [entryPointAddress]
+    );
+    const target = await getContract(deployer, publicClient, targetArtifact, targetAddress);
+    const entryPoint = await getContract(deployer, publicClient, entryPointArtifact, entryPointAddress);
+    const walletFactory = await getContract(deployer, publicClient, walletFactoryArtifact, walletFactoryAddress);
+    const predictedWalletAddress = await walletFactory.read.predictWallet([owner.account.address]);
     await walletFactory.write.createWallet([owner.account.address], { account: deployer.account });
     const walletAddress = await walletFactory.read.wallets([owner.account.address]);
-    const wallet = await viem.getContractAt("AgentSmartWallet", walletAddress);
-    const validator = await viem.deployContract("SessionKeyValidatorModule", [], { client: { wallet: deployer } });
-    const executor = await viem.deployContract("ExecutionModule", [], { client: { wallet: deployer } });
-    const paymaster = await viem.deployContract(
-      "SponsoredExecutionPaymaster",
-      [sponsor.account.address, entryPoint.address],
-      { client: { wallet: deployer } }
+    const wallet = await getContract(deployer, publicClient, walletArtifact, walletAddress);
+    const validatorAddress = await deployFromArtifact(deployer, publicClient, validatorArtifact, []);
+    const executorAddress = await deployFromArtifact(deployer, publicClient, executorArtifact, []);
+    const paymasterAddress = await deployFromArtifact(
+      deployer,
+      publicClient,
+      paymasterArtifact,
+      [sponsor.account.address, entryPoint.address]
     );
+    const validator = await getContract(deployer, publicClient, validatorArtifact, validatorAddress);
+    const executor = await getContract(deployer, publicClient, executorArtifact, executorAddress);
+    const paymaster = await getContract(deployer, publicClient, paymasterArtifact, paymasterAddress);
 
-    return { owner, sponsor, agent, target, entryPoint, walletFactory, wallet, validator, executor, paymaster };
+    return {
+      owner,
+      sponsor,
+      agent,
+      target,
+      entryPoint,
+      walletFactory,
+      wallet,
+      predictedWalletAddress,
+      validator,
+      executor,
+      paymaster
+    };
   }
 
   it("deploys through the factory and installs validator and executor modules", async function () {
-    const { owner, agent, target, wallet, walletFactory, validator, executor } = await deployFixture();
+    const { owner, agent, target, wallet, walletFactory, predictedWalletAddress, validator, executor } =
+      await deployFixture();
     const latestBlock = await publicClient.getBlock();
     const chainId = BigInt(await publicClient.getChainId());
     const expiresAt = Number(latestBlock.timestamp + 3600n);
@@ -140,6 +174,7 @@ describe("AgentSmartWallet", async function () {
 
     assert.equal(await wallet.read.accountId(), "tofu.agent-smart-wallet.erc7579.v1");
     assert.equal(await walletFactory.read.wallets([owner.account.address]), getAddress(wallet.address));
+    assert.equal(getAddress(predictedWalletAddress), getAddress(wallet.address));
     assert.equal(await wallet.read.isModuleInstalled([1n, validator.address, "0x"]), true);
     assert.equal(await wallet.read.isModuleInstalled([2n, executor.address, "0x"]), true);
   });

@@ -43,13 +43,6 @@ export const NETWORKS = {
     chainId: 420420417,
     label: "Polkadot Hub Testnet"
   },
-  moonbaseAlpha: {
-    key: "moonbaseAlpha",
-    rpcUrl: process.env.MOONBASE_RPC_URL ?? "https://rpc.api.moonbase.moonbeam.network",
-    wsUrls: [process.env.MOONBASE_WS_URL ?? "wss://wss.api.moonbase.moonbeam.network"],
-    chainId: 1287,
-    label: "Moonbase Alpha"
-  },
   peoplePaseo: {
     key: "peoplePaseo",
     rpcUrl: process.env.PEOPLE_PASEO_RPC_URL ?? "https://people-paseo.dotters.network",
@@ -67,11 +60,6 @@ export const NETWORKS = {
 };
 
 export const XCM_PRECOMPILE = "0x00000000000000000000000000000000000a0000";
-export const DEFAULT_MOONBASE_PARA_ID = Number.parseInt(process.env.MOONBASE_PARA_ID ?? "1000", 10);
-export const DEFAULT_XCM_FEE_WEI = BigInt(process.env.XCM_FEE_WEI ?? "10000000000000000");
-export const DEFAULT_TRANSACT_GAS_LIMIT = BigInt(process.env.XCM_TRANSACT_GAS_LIMIT ?? "300000");
-export const DEFAULT_TRANSACT_REF_TIME = BigInt(process.env.XCM_TRANSACT_REF_TIME ?? "5000000000");
-export const DEFAULT_TRANSACT_PROOF_SIZE = BigInt(process.env.XCM_TRANSACT_PROOF_SIZE ?? "200000");
 export const DEFAULT_XCM_VERSION = Number.parseInt(process.env.XCM_VERSION ?? "5", 10);
 export const PAS_UNITS = BigInt(process.env.XCM_TRANSFER_AMOUNT ?? "10000000000");
 export const PAS_REMOTE_FEE = BigInt(process.env.XCM_REMOTE_FEE_AMOUNT ?? "100000000");
@@ -127,21 +115,6 @@ export function createClients(networkName) {
     }
   };
   return { config, account, publicClient, walletClient, nonceManager };
-}
-
-export function deriveSiblingSovereignAccount(paraId) {
-  const paraIdHex = toHex(Uint8Array.from([
-    paraId & 0xff,
-    (paraId >> 8) & 0xff,
-    (paraId >> 16) & 0xff,
-    (paraId >> 24) & 0xff
-  ]));
-  return getAddress(
-    encodePacked(
-      ["bytes4", "bytes4", "bytes12"],
-      [toHex("sibl", { size: 4 }), paraIdHex, "0x000000000000000000000000"]
-    )
-  );
 }
 
 export async function createSubstrateApi(networkName) {
@@ -306,7 +279,7 @@ export async function writeDeployment(networkName, deployment) {
 
 export async function updateAddressesIndex(networkName, deployment) {
   const file = path.join(DEPLOYMENTS_DIR, "addresses.json");
-  let index = { polkadotTestnet: {}, moonbaseAlpha: {}, peoplePaseo: {} };
+  let index = { polkadotTestnet: {}, peoplePaseo: {}, shibuyaAstar: {} };
   try {
     index = JSON.parse(await fs.readFile(file, "utf8"));
   } catch {}
@@ -357,85 +330,6 @@ export function encodeVersionedXcm(api, instructions, version = DEFAULT_XCM_VERS
   return createTypeWithFallback(api, ["XcmVersionedXcm", "VersionedXcm", "StagingXcmVersionedXcm"], {
     [versionKey]: instructions
   }).toHex();
-}
-
-export function buildMoonbeamTransactCall(moonbeamApi, target, input, gasLimit = DEFAULT_TRANSACT_GAS_LIMIT) {
-  return moonbeamApi.tx.ethereumXcm
-    .transact({
-      V2: {
-        gasLimit,
-        action: {
-          Call: getAddress(target)
-        },
-        value: 0,
-        input
-      }
-    })
-    .method.toHex();
-}
-
-export async function estimateMoonbeamTransactWeight(moonbeamApi, payer, target, input, gasLimit = DEFAULT_TRANSACT_GAS_LIMIT) {
-  const payment = await moonbeamApi.tx.ethereumXcm
-    .transact({
-      V2: {
-        gasLimit,
-        action: {
-          Call: getAddress(target)
-        },
-        value: 0,
-        input
-      }
-    })
-    .paymentInfo(getAddress(payer));
-
-  return payment.weight.toJSON ? payment.weight.toJSON() : payment.weight;
-}
-
-export function buildMoonbeamExecutionMessage(
-  hubApi,
-  ethereumXcmCall,
-  {
-    xcmVersion = DEFAULT_XCM_VERSION,
-    feeAmount = DEFAULT_XCM_FEE_WEI,
-    requireWeightAtMost = {
-      refTime: DEFAULT_TRANSACT_REF_TIME,
-      proofSize: DEFAULT_TRANSACT_PROOF_SIZE
-    }
-  } = {}
-) {
-  const feeAsset = {
-    id: {
-      parents: 0,
-      interior: {
-        X1: [{ PalletInstance: 3 }]
-      }
-    },
-    fun: {
-      Fungible: feeAmount
-    }
-  };
-
-  return encodeVersionedXcm(
-    hubApi,
-    [
-      { WithdrawAsset: [feeAsset] },
-      { BuyExecution: [feeAsset, { Unlimited: null }] },
-      {
-        Transact: {
-          originKind: "SovereignAccount",
-          requireWeightAtMost,
-          call: {
-            encoded: ethereumXcmCall
-          }
-        }
-      }
-    ],
-    xcmVersion
-  );
-}
-
-export async function getHubParaId(hubApi) {
-  return Number((await hubApi.query.parachainInfo.parachainId()).toString());
 }
 
 export function beneficiaryAccountHex(value) {
@@ -684,14 +578,6 @@ export function buildReserveTransferMessage(
   );
 }
 
-export function buildContractSmokeMessage(hubApi, { xcmVersion = DEFAULT_XCM_VERSION } = {}) {
-  return encodeVersionedXcm(
-    hubApi,
-    [{ ClearOrigin: null }],
-    xcmVersion
-  );
-}
-
 export async function ensureNativeBalance(
   clientBundle,
   address,
@@ -741,80 +627,4 @@ export async function waitForSystemFreeBalanceIncrease(api, accountId, initialBa
   }
 
   throw new Error("Timed out waiting for destination balance increase.");
-}
-
-export async function ensureMoonbeamSovereignBalance(
-  moonbeam,
-  sovereignAccount,
-  {
-    minBalance = DEFAULT_XCM_FEE_WEI * 2n,
-    topUpBalance = DEFAULT_XCM_FEE_WEI * 10n
-  } = {}
-) {
-  const currentBalance = await moonbeam.publicClient.getBalance({ address: sovereignAccount });
-  if (currentBalance >= minBalance) {
-    return { funded: false, balance: currentBalance };
-  }
-
-  const value = topUpBalance > currentBalance ? topUpBalance - currentBalance : minBalance;
-  const hash = await moonbeam.walletClient.sendTransaction({
-    account: moonbeam.account,
-    chain: moonbeam.walletClient.chain,
-    nonce: moonbeam.nonceManager ? await moonbeam.nonceManager.next() : undefined,
-    to: sovereignAccount,
-    value
-  });
-  await moonbeam.publicClient.waitForTransactionReceipt({ hash });
-  const balance = await moonbeam.publicClient.getBalance({ address: sovereignAccount });
-  return { funded: true, balance };
-}
-
-export async function dryRunMoonbeamExecutionMessage(moonbeamApi, originParaId, encodedMessage) {
-  const message = createTypeWithFallback(
-    moonbeamApi,
-    ["XcmVersionedXcm", "VersionedXcm", "StagingXcmVersionedXcm"],
-    hexToBytes(encodedMessage)
-  );
-  const origin = createTypeWithFallback(
-    moonbeamApi,
-    ["XcmVersionedLocation", "VersionedLocation", "StagingXcmVersionedLocation"],
-    {
-      [`V${DEFAULT_XCM_VERSION}`]: {
-        parents: 1,
-        interior: {
-          X1: [{ Parachain: originParaId }]
-        }
-      }
-    }
-  );
-
-  const result = await moonbeamApi.call.dryRunApi.dryRunXcm(origin, message);
-  return result.toJSON ? result.toJSON() : result;
-}
-
-export async function waitForRemoteExecutionLog(publicClient, target, requestId, fromBlock) {
-  const timeoutMs = Number.parseInt(process.env.XCM_RESULT_TIMEOUT_MS ?? "180000", 10);
-  const pollMs = Number.parseInt(process.env.XCM_RESULT_POLL_MS ?? "5000", 10);
-  const event = parseAbiItem(
-    "event RemoteExecutionRecorded(address indexed caller, bytes32 indexed requestId, bytes32 indexed memo)"
-  );
-  const deadline = Date.now() + timeoutMs;
-
-  while (Date.now() < deadline) {
-    const logs = await publicClient.getLogs({
-      address: getAddress(target),
-      event,
-      args: { requestId },
-      fromBlock
-    });
-    if (logs.length > 0) {
-      return logs[0];
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-  }
-
-  throw new Error(
-    "Timed out waiting for Moonbeam execution log. The XCM may still be pending or the destination origin may need fee funding."
-  );
 }

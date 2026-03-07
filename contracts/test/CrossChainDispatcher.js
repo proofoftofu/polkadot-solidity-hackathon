@@ -2,70 +2,60 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { network } from "hardhat";
-import { encodeAbiParameters, encodeFunctionData, getAddress, parseAbiParameters, stringToHex } from "viem";
+import { encodeAbiParameters, parseAbiParameters, stringToHex } from "viem";
+import { deployFromArtifact, getContract, readArtifact } from "../scripts/common.js";
 
 const DESTINATION = encodeAbiParameters(
   parseAbiParameters("uint8 parents, uint32 paraId, bytes20 accountKey20"),
   [1, 2004, "0x1111111111111111111111111111111111111111"]
 );
-const PREFIX = stringToHex("TOFU_XCM_V1");
+const RAW_MESSAGE = stringToHex("hub-wallet-xcm");
 
 describe("CrossChainDispatcher", async function () {
   const { viem } = await network.connect();
 
   async function deployFixture() {
     const [deployer] = await viem.getWalletClients();
-    const router = await viem.deployContract("MockMoonbeamXcmRouter", [DESTINATION, PREFIX], {
-      client: { wallet: deployer }
-    });
-    const xcmPrecompile = await viem.deployContract("MockXcmPrecompile", [router.address], {
-      client: { wallet: deployer }
-    });
-    const dispatcher = await viem.deployContract(
-      "CrossChainDispatcher",
-      [deployer.account.address, xcmPrecompile.address, 1287n, DESTINATION],
-      { client: { wallet: deployer } }
+    const publicClient = await viem.getPublicClient();
+    const routerArtifact = await readArtifact("mocks/MockMoonbeamXcmRouter.sol", "MockMoonbeamXcmRouter");
+    const xcmPrecompileArtifact = await readArtifact("mocks/MockXcmPrecompile.sol", "MockXcmPrecompile");
+    const dispatcherArtifact = await readArtifact("CrossChainDispatcher.sol", "CrossChainDispatcher");
+
+    const routerAddress = await deployFromArtifact(
+      deployer,
+      publicClient,
+      routerArtifact,
+      [DESTINATION]
     );
-    const target = await viem.deployContract("MockTarget", [], { client: { wallet: deployer } });
-    const receiver = await viem.deployContract("CrossChainReceiver", [router.address, dispatcher.address], {
-      client: { wallet: deployer }
-    });
+    const xcmPrecompileAddress = await deployFromArtifact(
+      deployer,
+      publicClient,
+      xcmPrecompileArtifact,
+      [routerAddress]
+    );
+    const dispatcherAddress = await deployFromArtifact(
+      deployer,
+      publicClient,
+      dispatcherArtifact,
+      [deployer.account.address, xcmPrecompileAddress]
+    );
 
-    await dispatcher.write.setMessagePrefix([PREFIX], { account: deployer.account });
-    await dispatcher.write.setAllowedReceiver([receiver.address, true], { account: deployer.account });
+    const router = await getContract(deployer, publicClient, routerArtifact, routerAddress);
+    const xcmPrecompile = await getContract(deployer, publicClient, xcmPrecompileArtifact, xcmPrecompileAddress);
+    const dispatcher = await getContract(deployer, publicClient, dispatcherArtifact, dispatcherAddress);
 
-    return { deployer, router, xcmPrecompile, dispatcher, receiver, target };
+    return { deployer, router, xcmPrecompile, dispatcher };
   }
 
-  it("routes a hub dispatch through the XCM precompile-compatible path", async function () {
-    const { dispatcher, receiver, target } = await deployFixture();
+  it("sends a raw XCM message through the precompile-compatible path", async function () {
+    const { dispatcher, router } = await deployFixture();
     const requestId = stringToHex("req-1", { size: 32 });
-    const memo = stringToHex("moonbeam", { size: 32 });
-    const remoteCall = {
-      destinationChainId: 1287n,
-      receiver: receiver.address,
-      target: target.address,
-      value: 0n,
-      callData: encodeFunctionData({
-        abi: target.abi,
-        functionName: "recordMemo",
-        args: [memo]
-      }),
-      requestId
-    };
+    await dispatcher.write.dispatchEncodedMessage([requestId, DESTINATION, RAW_MESSAGE]);
+    const events = await router.getEvents.XcmDelivered();
 
-    const weight = await dispatcher.read.estimateDispatchWeight([remoteCall]);
-    assert.equal(weight.proofSize > 0n, true);
-
-    await viem.assertions.emitWithArgs(
-      dispatcher.write.dispatchRemoteCall([remoteCall]),
-      receiver,
-      "CrossChainCallExecuted",
-      [getAddress(dispatcher.address), getAddress(target.address), requestId, 0n]
-    );
-
-    assert.equal(await target.read.lastMemo(), memo);
-    assert.equal(await receiver.read.executedRequests([requestId]), true);
+    assert.equal(events.length > 0, true);
+    assert.equal(events[0].args.payload, RAW_MESSAGE);
+    assert.equal(events[0].args.destination, DESTINATION);
   });
 
   it("executes a raw encoded XCM program through the precompile", async function () {
@@ -76,42 +66,5 @@ describe("CrossChainDispatcher", async function () {
 
     await dispatcher.write.executeEncodedMessage([requestId, encodedMessage, weight], { account: deployer.account });
     assert.equal((await xcmPrecompile.getEvents.XcmExecuted()).length > 0, true);
-  });
-
-  it("rejects unsupported receivers and direct calls on the Moonbeam-side receiver", async function () {
-    const { deployer, dispatcher, receiver, target } = await deployFixture();
-    const requestId = stringToHex("req-2", { size: 32 });
-
-    await viem.assertions.revertWithCustomError(
-      dispatcher.write.dispatchRemoteCall([
-        {
-          destinationChainId: 1287n,
-          receiver: target.address,
-          target: target.address,
-          value: 0n,
-          callData: encodeFunctionData({
-            abi: target.abi,
-            functionName: "recordMemo",
-            args: [stringToHex("bad", { size: 32 })]
-          }),
-          requestId
-        }
-      ]),
-      dispatcher,
-      "UnsupportedReceiver"
-    );
-
-    await viem.assertions.revertWithCustomError(
-      receiver.write.receiveCrossChainCall(
-        [dispatcher.address, target.address, 0n, encodeFunctionData({
-          abi: target.abi,
-          functionName: "recordMemo",
-          args: [stringToHex("direct", { size: 32 })]
-        }), requestId],
-        { account: deployer.account }
-      ),
-      receiver,
-      "OnlyRelayer"
-    );
   });
 });

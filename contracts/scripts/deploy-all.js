@@ -5,10 +5,8 @@ import {
   createClients,
   createSubstrateApi,
   deployFromArtifact,
-  getContract,
   readArtifact,
   updateAddressesIndex,
-  writeContract,
   writeDeployment
 } from "./common.js";
 
@@ -40,7 +38,7 @@ async function deployPolkadotHub() {
     walletClient,
     publicClient,
     dispatcherArtifact,
-    [account.address, XCM_PRECOMPILE, 0n, "0x"],
+    [account.address, XCM_PRECOMPILE],
     nonceManager
   );
 
@@ -64,27 +62,12 @@ async function deployPolkadotHub() {
   return deployment;
 }
 
-async function configurePeopleChainRoute(hubDeployment) {
-  const hub = createClients("polkadotTestnet");
+async function configurePeopleChainRoute() {
   const peopleApi = await createSubstrateApi("peoplePaseo");
-  const dispatcherArtifact = await readArtifact("CrossChainDispatcher.sol", "CrossChainDispatcher");
-  const dispatcher = await getContract(
-    hub.walletClient,
-    hub.publicClient,
-    dispatcherArtifact,
-    hubDeployment.contracts.crossChainDispatcher
-  );
 
   const beneficiary = process.env.PEOPLE_PASEO_BENEFICIARY
     ?? "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";
   const peopleParaId = Number((await peopleApi.query.parachainInfo.parachainId()).toString());
-
-  await writeContract(
-    dispatcher.write.setAllowedReceiver,
-    [hubDeployment.deployer, true],
-    hub.publicClient,
-    hub.nonceManager
-  );
 
   const deployment = {
     network: "peoplePaseo",
@@ -101,7 +84,7 @@ async function configurePeopleChainRoute(hubDeployment) {
 
 async function main() {
   const hubDeployment = await deployPolkadotHub();
-  const peopleDeployment = await configurePeopleChainRoute(hubDeployment);
+  const peopleDeployment = await configurePeopleChainRoute();
 
   console.log("Deployed Hub contracts and configured People Chain smoke test.");
   console.log(`Polkadot Hub dispatcher: ${hubDeployment.contracts.crossChainDispatcher}`);

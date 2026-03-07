@@ -5,14 +5,12 @@
   "type": "module",
   "scripts": {
     "compile": "hardhat compile",
-    "test": "hardhat test --no-compile",
-    "test:compile": "hardhat test",
+    "test": "hardhat test test/CrossChainDispatcher.js test/AgentSmartWallet.js --no-compile",
+    "test:compile": "hardhat test test/CrossChainDispatcher.js test/AgentSmartWallet.js",
     "deploy:polkadot": "hardhat run scripts/deploy.js --network polkadotTestnet",
-    "deploy:moonbeam": "hardhat run scripts/deploy.js --network moonbaseAlpha",
     "deploy:all": "node scripts/deploy-all.js",
-    "configure:hub": "node scripts/configure-hub.js",
-    "test:deployed": "node scripts/test-deployed-flow.js",
-    "test:deployed:shibuya": "node scripts/test-deployed-flow-shibuya.js",
+    "test:deployed:xcm": "node scripts/test-deployed-xcm.js",
+    "test:deployed:xcm:shibuya": "node scripts/test-deployed-xcm-shibuya.js",
     "export:artifacts": "hardhat run scripts/export-artifacts.js --network hardhatMainnet"
   },
   "devDependencies": {

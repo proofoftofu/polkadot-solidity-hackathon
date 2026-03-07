@@ -9,8 +9,7 @@ const CONTRACTS = [
   "SessionKeyValidatorModule",
   "ExecutionModule",
   "SponsoredExecutionPaymaster",
-  "CrossChainDispatcher",
-  "CrossChainReceiver"
+  "CrossChainDispatcher"
 ];
 
 async function main() {
