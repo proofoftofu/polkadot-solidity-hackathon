@@ -5,8 +5,6 @@ description: Request approval-gated access to the local wallet portal experiment
 
 # Agent Interaction
 
-Work from `/Users/admin/Documents/Developments/proofoftofu/automate-hackathon/hackathons/polkadot-solidity-hackathon/workspace/experiments/agent-interaction`.
-
 Treat the app as a localhost-only dependency. The portal runs on the user's machine, so sandboxed network access may fail even for `127.0.0.1`. Run the required `curl` calls with approval when sandbox access blocks them.
 
 ## Prepare the request
