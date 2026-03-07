@@ -4,29 +4,61 @@ pragma solidity ^0.8.28;
 import "./interfaces/IXcm.sol";
 
 contract CrossChainDispatcher {
+    uint8 public constant ENDPOINT_KIND_EXECUTE = 0;
+    uint8 public constant ENDPOINT_KIND_SEND = 1;
+
+    uint8 public constant INSTRUCTION_KIND_WITHDRAW_ASSET = 0;
+    uint8 public constant INSTRUCTION_KIND_BUY_EXECUTION = 1;
+    uint8 public constant INSTRUCTION_KIND_PAY_FEES = 2;
+    uint8 public constant INSTRUCTION_KIND_INITIATE_TRANSFER = 3;
+    uint8 public constant INSTRUCTION_KIND_DEPOSIT_ASSET = 4;
+
+    bytes32 public constant PAS_NATIVE_ASSET_ID = keccak256("polkadot-hub/pas-native");
+
     error NotOwner();
     error EmptyEncodedMessage();
-    error InvalidTeleportConfig();
+    error InvalidEndpoint();
+    error UnsupportedInstructionSequence();
+    error InvalidInstructionCount();
+    error InvalidInstructionAsset();
+    error InvalidInstructionAmount();
+    error InvalidInstructionTarget();
 
-    struct TeleportConfig {
-        uint32 destinationParaId;
-        bytes32 beneficiaryAccountId32;
+    struct XcmInstruction {
+        uint8 kind;
+        bytes32 assetId;
         uint128 amount;
+        uint32 paraId;
+        bytes32 accountId32;
+    }
+
+    struct XcmProgram {
+        uint8 endpointKind;
+        uint32 endpointParaId;
+        XcmInstruction[] instructions;
+    }
+
+    struct TransferProgramSummary {
+        bytes32 assetId;
+        uint128 withdrawAmount;
         uint128 localFee;
         uint128 remoteFee;
+        uint32 destinationParaId;
+        bytes32 beneficiaryAccountId32;
     }
 
     address public immutable owner;
     IXcm public immutable xcm;
+
     event RawXcmDispatched(bytes32 indexed requestId, bytes destination, bytes message);
     event RawXcmExecuted(bytes32 indexed requestId, bytes message, uint64 refTime, uint64 proofSize);
-    event TeleportExecuted(
+    event ProgramExecuted(
         bytes32 indexed requestId,
-        uint32 indexed destinationParaId,
-        bytes32 indexed beneficiaryAccountId32,
-        uint128 amount,
-        uint128 localFee,
-        uint128 remoteFee
+        uint8 indexed endpointKind,
+        bytes32 indexed assetId,
+        uint128 withdrawAmount,
+        uint32 destinationParaId,
+        bytes32 beneficiaryAccountId32
     );
 
     receive() external payable {}
@@ -50,25 +82,25 @@ contract CrossChainDispatcher {
         return xcm.weighMessage(message);
     }
 
-    function buildTeleportMessage(TeleportConfig calldata config) public pure returns (bytes memory) {
-        _validateTeleportConfig(config);
+    function buildProgram(XcmProgram calldata program) public pure returns (bytes memory) {
+        TransferProgramSummary memory summary = _summarizeTransferProgram(program);
 
         return bytes.concat(
             hex"050c0004010000",
-            _encodeCompact(config.amount),
+            _encodeCompact(summary.withdrawAmount),
             hex"30010000",
-            _encodeCompact(config.localFee),
+            _encodeCompact(summary.localFee),
             hex"31010100",
-            _encodeCompact(config.destinationParaId),
+            _encodeCompact(summary.destinationParaId),
             hex"01000004010000",
-            _encodeCompact(config.remoteFee),
+            _encodeCompact(summary.remoteFee),
             hex"000400010204040d01020400010100",
-            abi.encodePacked(config.beneficiaryAccountId32)
+            abi.encodePacked(summary.beneficiaryAccountId32)
         );
     }
 
-    function estimateTeleportWeight(TeleportConfig calldata config) external view returns (IXcm.Weight memory) {
-        return xcm.weighMessage(buildTeleportMessage(config));
+    function estimateProgramWeight(XcmProgram calldata program) external view returns (IXcm.Weight memory) {
+        return xcm.weighMessage(buildProgram(program));
     }
 
     function dispatchEncodedMessage(bytes32 requestId, bytes calldata destination, bytes calldata encodedMessage)
@@ -95,29 +127,109 @@ contract CrossChainDispatcher {
         emit RawXcmExecuted(requestId, encodedMessage, weight.refTime, weight.proofSize);
     }
 
-    function executeTeleport(bytes32 requestId, TeleportConfig calldata config) external onlyOwner {
-        bytes memory encodedMessage = buildTeleportMessage(config);
+    function executeProgram(bytes32 requestId, XcmProgram calldata program) external onlyOwner {
+        if (program.endpointKind != ENDPOINT_KIND_EXECUTE) {
+            revert InvalidEndpoint();
+        }
+
+        TransferProgramSummary memory summary = _summarizeTransferProgram(program);
+        bytes memory encodedMessage = buildProgram(program);
         IXcm.Weight memory weight = xcm.weighMessage(encodedMessage);
 
         xcm.execute(encodedMessage, weight);
         emit RawXcmExecuted(requestId, encodedMessage, weight.refTime, weight.proofSize);
-        emit TeleportExecuted(
+        emit ProgramExecuted(
             requestId,
-            config.destinationParaId,
-            config.beneficiaryAccountId32,
-            config.amount,
-            config.localFee,
-            config.remoteFee
+            program.endpointKind,
+            summary.assetId,
+            summary.withdrawAmount,
+            summary.destinationParaId,
+            summary.beneficiaryAccountId32
         );
     }
 
-    function _validateTeleportConfig(TeleportConfig calldata config) private pure {
-        if (
-            config.destinationParaId == 0 || config.beneficiaryAccountId32 == bytes32(0) || config.amount == 0
-                || config.localFee == 0 || config.remoteFee == 0 || config.amount <= config.localFee + config.remoteFee
-        ) {
-            revert InvalidTeleportConfig();
+    function dispatchProgram(bytes32 requestId, XcmProgram calldata program) external onlyOwner {
+        if (program.endpointKind != ENDPOINT_KIND_SEND) {
+            revert InvalidEndpoint();
         }
+        if (program.endpointParaId == 0) {
+            revert InvalidInstructionTarget();
+        }
+
+        TransferProgramSummary memory summary = _summarizeTransferProgram(program);
+        bytes memory encodedMessage = buildProgram(program);
+        bytes memory destination = _encodeParachainDestination(program.endpointParaId);
+
+        xcm.send(destination, encodedMessage);
+        emit RawXcmDispatched(requestId, destination, encodedMessage);
+        emit ProgramExecuted(
+            requestId,
+            program.endpointKind,
+            summary.assetId,
+            summary.withdrawAmount,
+            summary.destinationParaId,
+            summary.beneficiaryAccountId32
+        );
+    }
+
+    function summarizeProgram(XcmProgram calldata program) external pure returns (TransferProgramSummary memory) {
+        return _summarizeTransferProgram(program);
+    }
+
+    function _summarizeTransferProgram(XcmProgram calldata program)
+        private
+        pure
+        returns (TransferProgramSummary memory summary)
+    {
+        if (program.instructions.length != 4) {
+            revert InvalidInstructionCount();
+        }
+
+        XcmInstruction calldata withdrawInstruction = program.instructions[0];
+        XcmInstruction calldata payFeesInstruction = program.instructions[1];
+        XcmInstruction calldata transferInstruction = program.instructions[2];
+        XcmInstruction calldata depositInstruction = program.instructions[3];
+
+        if (
+            withdrawInstruction.kind != INSTRUCTION_KIND_WITHDRAW_ASSET
+                || payFeesInstruction.kind != INSTRUCTION_KIND_PAY_FEES
+                || transferInstruction.kind != INSTRUCTION_KIND_INITIATE_TRANSFER
+                || depositInstruction.kind != INSTRUCTION_KIND_DEPOSIT_ASSET
+        ) {
+            revert UnsupportedInstructionSequence();
+        }
+        if (
+            withdrawInstruction.assetId != PAS_NATIVE_ASSET_ID || payFeesInstruction.assetId != PAS_NATIVE_ASSET_ID
+                || transferInstruction.assetId != PAS_NATIVE_ASSET_ID
+        ) {
+            revert InvalidInstructionAsset();
+        }
+        if (
+            withdrawInstruction.amount == 0 || payFeesInstruction.amount == 0 || transferInstruction.amount == 0
+                || withdrawInstruction.amount <= payFeesInstruction.amount + transferInstruction.amount
+        ) {
+            revert InvalidInstructionAmount();
+        }
+        if (transferInstruction.paraId == 0 || depositInstruction.accountId32 == bytes32(0)) {
+            revert InvalidInstructionTarget();
+        }
+        if (
+            withdrawInstruction.paraId != 0 || withdrawInstruction.accountId32 != bytes32(0)
+                || payFeesInstruction.paraId != 0 || payFeesInstruction.accountId32 != bytes32(0)
+                || depositInstruction.assetId != bytes32(0) || depositInstruction.amount != 0
+                || depositInstruction.paraId != 0
+        ) {
+            revert UnsupportedInstructionSequence();
+        }
+
+        summary = TransferProgramSummary({
+            assetId: withdrawInstruction.assetId,
+            withdrawAmount: withdrawInstruction.amount,
+            localFee: payFeesInstruction.amount,
+            remoteFee: transferInstruction.amount,
+            destinationParaId: transferInstruction.paraId,
+            beneficiaryAccountId32: depositInstruction.accountId32
+        });
     }
 
     function _encodeCompact(uint256 value) private pure returns (bytes memory encoded) {
@@ -148,5 +260,9 @@ contract CrossChainDispatcher {
                 encoded[i + 1] = bytes1(uint8(value >> (8 * i)));
             }
         }
+    }
+
+    function _encodeParachainDestination(uint32 paraId) private pure returns (bytes memory) {
+        return bytes.concat(hex"050100", _encodeCompact(paraId));
     }
 }

@@ -9,6 +9,7 @@ import {
 
 import { blake2AsU8a, encodeAddress } from "@polkadot/util-crypto";
 import { hexToU8a, stringToU8a, u8aConcat, u8aToHex } from "@polkadot/util";
+import { keccak256, stringToHex } from "viem";
 
 function evmToSubstrateAccount(address) {
   return u8aToHex(
@@ -107,14 +108,41 @@ async function main() {
   );
   const localFee = BigInt(process.env.PEOPLE_PASEO_LOCAL_FEE_AMOUNT ?? "1000000000");
   const remoteFee = BigInt(process.env.PEOPLE_PASEO_REMOTE_FEE_AMOUNT ?? "1000000000");
-  const teleportConfig = {
-    destinationParaId: paraId,
-    beneficiaryAccountId32: beneficiary,
-    amount: transferAmount,
-    localFee,
-    remoteFee
+  const program = {
+    endpointKind: 0,
+    endpointParaId: 0,
+    instructions: [
+      {
+        kind: 0,
+        assetId: keccak256(stringToHex("polkadot-hub/pas-native")),
+        amount: transferAmount,
+        paraId: 0,
+        accountId32: `0x${"00".repeat(32)}`
+      },
+      {
+        kind: 2,
+        assetId: keccak256(stringToHex("polkadot-hub/pas-native")),
+        amount: localFee,
+        paraId: 0,
+        accountId32: `0x${"00".repeat(32)}`
+      },
+      {
+        kind: 3,
+        assetId: keccak256(stringToHex("polkadot-hub/pas-native")),
+        amount: remoteFee,
+        paraId,
+        accountId32: `0x${"00".repeat(32)}`
+      },
+      {
+        kind: 4,
+        assetId: `0x${"00".repeat(32)}`,
+        amount: 0n,
+        paraId: 0,
+        accountId32: beneficiary
+      }
+    ]
   };
-  const encodedMessage = await dispatcher.read.buildTeleportMessage([teleportConfig]);
+  const encodedMessage = await dispatcher.read.buildProgram([program]);
 
   const dispatcherEvmBalance = await ensureDispatcherEvmBalance(
     hub,
@@ -191,13 +219,13 @@ async function main() {
     )
   );
 
-  const weight = await dispatcher.read.estimateTeleportWeight([teleportConfig]);
+  const weight = await dispatcher.read.estimateProgramWeight([program]);
   console.log("weight", weight);
 
   const requestId = `0x${Date.now().toString(16).padEnd(64, "0")}`;
 
   try {
-    const hash = await dispatcher.write.executeTeleport([requestId, teleportConfig], {
+    const hash = await dispatcher.write.executeProgram([requestId, program], {
       account: hub.account
     });
     console.log(`Hub contract-origin execute tx: ${hash}`);

@@ -9,8 +9,21 @@ interface IWalletExecute {
 
 contract SessionKeyValidatorModule is IERC7579Validator {
     uint8 public constant OPERATION_KIND_CALL = 0;
-    uint8 public constant OPERATION_KIND_XCM_TELEPORT = 1;
-    bytes4 public constant EXECUTE_TELEPORT_SELECTOR = bytes4(keccak256("executeTeleport(bytes32,(uint32,bytes32,uint128,uint128,uint128))"));
+    uint8 public constant OPERATION_KIND_XCM_PROGRAM = 1;
+
+    uint8 public constant ENDPOINT_KIND_EXECUTE = 0;
+    uint8 public constant ENDPOINT_KIND_SEND = 1;
+
+    uint8 public constant XCM_INSTRUCTION_WITHDRAW_ASSET = 0;
+    uint8 public constant XCM_INSTRUCTION_BUY_EXECUTION = 1;
+    uint8 public constant XCM_INSTRUCTION_PAY_FEES = 2;
+    uint8 public constant XCM_INSTRUCTION_INITIATE_TRANSFER = 3;
+    uint8 public constant XCM_INSTRUCTION_DEPOSIT_ASSET = 4;
+
+    bytes4 public constant EXECUTE_PROGRAM_SELECTOR =
+        bytes4(keccak256("executeProgram(bytes32,(uint8,uint32,(uint8,bytes32,uint128,uint32,bytes32)[]))"));
+    bytes4 public constant DISPATCH_PROGRAM_SELECTOR =
+        bytes4(keccak256("dispatchProgram(bytes32,(uint8,uint32,(uint8,bytes32,uint128,uint32,bytes32)[]))"));
     bytes4 public constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
     bytes4 public constant ERC1271_INVALID_VALUE = 0xffffffff;
 
@@ -25,20 +38,31 @@ contract SessionKeyValidatorModule is IERC7579Validator {
     error InvalidSignatureLength();
     error UnsupportedOperationKind();
 
-    struct TeleportPolicy {
-        uint32 destinationParaId;
-        bytes32 beneficiaryAccountId32;
-        uint128 maxTeleportAmount;
-        uint128 maxLocalFee;
-        uint128 maxRemoteFee;
+    struct AssetLimit {
+        bytes32 assetId;
+        uint128 maxAmount;
     }
 
-    struct TeleportConfig {
-        uint32 destinationParaId;
-        bytes32 beneficiaryAccountId32;
+    struct XcmPolicy {
+        uint256 allowedEndpointBitmap;
+        uint256 allowedInstructionBitmap;
+        uint32[] allowedDestinationParaIds;
+        bytes32[] allowedBeneficiaries;
+        AssetLimit[] assetLimits;
+    }
+
+    struct XcmInstruction {
+        uint8 kind;
+        bytes32 assetId;
         uint128 amount;
-        uint128 localFee;
-        uint128 remoteFee;
+        uint32 paraId;
+        bytes32 accountId32;
+    }
+
+    struct XcmProgram {
+        uint8 endpointKind;
+        uint32 endpointParaId;
+        XcmInstruction[] instructions;
     }
 
     struct SessionConfig {
@@ -53,7 +77,7 @@ contract SessionKeyValidatorModule is IERC7579Validator {
         uint128 remainingValue;
         bool sponsorshipAllowed;
         uint8 operationKind;
-        TeleportPolicy teleportPolicy;
+        XcmPolicy xcmPolicy;
         bool installed;
     }
 
@@ -69,33 +93,57 @@ contract SessionKeyValidatorModule is IERC7579Validator {
         uint128 remainingValue;
         bool sponsorshipAllowed;
         uint8 operationKind;
-        TeleportPolicy teleportPolicy;
+        uint8[] allowedEndpointKinds;
+        uint8[] allowedInstructionKinds;
+        uint32[] allowedDestinationParaIds;
+        bytes32[] allowedBeneficiaries;
+        AssetLimit[] assetLimits;
     }
 
-    mapping(address account => SessionConfig config) public sessions;
+    struct XcmProgramSummary {
+        uint8 endpointKind;
+        bytes4 selector;
+        bytes32 primaryAssetId;
+        uint128 primaryAmount;
+        uint32 destinationParaId;
+        bytes32 beneficiaryAccountId32;
+    }
+
+    mapping(address account => SessionConfig config) private sessions;
 
     function onInstall(bytes calldata data) external {
         SessionInstallConfig memory config = abi.decode(data, (SessionInstallConfig));
+        SessionConfig storage session = sessions[msg.sender];
 
-        if (sessions[msg.sender].installed) {
+        if (session.installed) {
             revert SessionAlreadyInstalled();
         }
 
-        sessions[msg.sender] = SessionConfig({
-            sessionKey: config.sessionKey,
-            agentId: config.agentId,
-            targetChainId: config.targetChainId,
-            allowedTarget: config.allowedTarget,
-            allowedSelector: config.allowedSelector,
-            validUntil: config.validUntil,
-            replayNonce: config.replayNonce,
-            remainingCalls: config.remainingCalls,
-            remainingValue: config.remainingValue,
-            sponsorshipAllowed: config.sponsorshipAllowed,
-            operationKind: config.operationKind,
-            teleportPolicy: config.teleportPolicy,
-            installed: true
-        });
+        session.sessionKey = config.sessionKey;
+        session.agentId = config.agentId;
+        session.targetChainId = config.targetChainId;
+        session.allowedTarget = config.allowedTarget;
+        session.allowedSelector = config.allowedSelector;
+        session.validUntil = config.validUntil;
+        session.replayNonce = config.replayNonce;
+        session.remainingCalls = config.remainingCalls;
+        session.remainingValue = config.remainingValue;
+        session.sponsorshipAllowed = config.sponsorshipAllowed;
+        session.operationKind = config.operationKind;
+        session.xcmPolicy.allowedEndpointBitmap = _endpointBitmap(config.allowedEndpointKinds);
+        session.xcmPolicy.allowedInstructionBitmap = _instructionBitmap(config.allowedInstructionKinds);
+
+        for (uint256 i = 0; i < config.allowedDestinationParaIds.length; i++) {
+            session.xcmPolicy.allowedDestinationParaIds.push(config.allowedDestinationParaIds[i]);
+        }
+        for (uint256 i = 0; i < config.allowedBeneficiaries.length; i++) {
+            session.xcmPolicy.allowedBeneficiaries.push(config.allowedBeneficiaries[i]);
+        }
+        for (uint256 i = 0; i < config.assetLimits.length; i++) {
+            session.xcmPolicy.assetLimits.push(config.assetLimits[i]);
+        }
+
+        session.installed = true;
     }
 
     function onUninstall(bytes calldata) external {
@@ -107,6 +155,21 @@ contract SessionKeyValidatorModule is IERC7579Validator {
 
     function isModuleType(uint256 moduleTypeId) external pure returns (bool) {
         return moduleTypeId == 1;
+    }
+
+    function getSessionState(address account)
+        external
+        view
+        returns (
+            uint64 replayNonce,
+            uint32 remainingCalls,
+            uint128 remainingValue,
+            uint8 operationKind,
+            bool installed
+        )
+    {
+        SessionConfig storage config = sessions[account];
+        return (config.replayNonce, config.remainingCalls, config.remainingValue, config.operationKind, config.installed);
     }
 
     function validateUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash) external view returns (uint256) {
@@ -131,8 +194,8 @@ contract SessionKeyValidatorModule is IERC7579Validator {
         bool allowed;
         if (config.operationKind == OPERATION_KIND_CALL) {
             allowed = _validateDirectCallPolicy(config, executionCalldata);
-        } else if (config.operationKind == OPERATION_KIND_XCM_TELEPORT) {
-            allowed = _validateTeleportPolicy(config, executionCalldata);
+        } else if (config.operationKind == OPERATION_KIND_XCM_PROGRAM) {
+            allowed = _validateXcmProgramPolicy(config, executionCalldata);
         } else {
             return 1;
         }
@@ -179,10 +242,10 @@ contract SessionKeyValidatorModule is IERC7579Validator {
             uint256 value = _validateAndConsumeDirectCall(config, executionCalldata);
             config.remainingCalls -= 1;
             config.remainingValue -= uint128(value);
-        } else if (config.operationKind == OPERATION_KIND_XCM_TELEPORT) {
-            uint128 amount = _validateAndConsumeTeleport(config, executionCalldata);
+        } else if (config.operationKind == OPERATION_KIND_XCM_PROGRAM) {
+            XcmProgramSummary memory summary = _validateAndConsumeXcmProgram(config, executionCalldata);
             config.remainingCalls -= 1;
-            config.remainingValue -= amount;
+            config.remainingValue -= summary.primaryAmount;
         } else {
             revert UnsupportedOperationKind();
         }
@@ -202,35 +265,31 @@ contract SessionKeyValidatorModule is IERC7579Validator {
             && value <= uint256(config.remainingValue);
     }
 
-    function _validateTeleportPolicy(SessionConfig storage config, bytes memory executionCalldata)
+    function _validateXcmProgramPolicy(SessionConfig storage config, bytes memory executionCalldata)
         private
         view
         returns (bool)
     {
-        (
-            address target,
-            uint256 value,
-            bytes4 selector,
-            uint32 destinationParaId,
-            bytes32 beneficiaryAccountId32,
-            uint128 amount,
-            uint128 localFee,
-            uint128 remoteFee
-        ) = _decodeTeleportFromMemory(executionCalldata);
+        XcmProgramSummary memory summary =
+            _decodeAndSummarizeXcmProgramFromMemory(executionCalldata, config.allowedTarget, config.xcmPolicy.allowedInstructionBitmap);
 
-        if (target != config.allowedTarget || value != 0 || selector != EXECUTE_TELEPORT_SELECTOR) {
+        if (!_isEndpointAllowed(config.xcmPolicy.allowedEndpointBitmap, summary.endpointKind)) {
             return false;
         }
-        if (destinationParaId != config.teleportPolicy.destinationParaId) {
+        if (!_isDestinationAllowed(config.xcmPolicy.allowedDestinationParaIds, summary.destinationParaId)) {
             return false;
         }
-        if (config.teleportPolicy.beneficiaryAccountId32 != bytes32(0)) {
-            if (beneficiaryAccountId32 != config.teleportPolicy.beneficiaryAccountId32) {
-                return false;
-            }
+        if (!_isBeneficiaryAllowed(config.xcmPolicy.allowedBeneficiaries, summary.beneficiaryAccountId32)) {
+            return false;
         }
-        return amount <= config.teleportPolicy.maxTeleportAmount && amount <= config.remainingValue
-            && localFee <= config.teleportPolicy.maxLocalFee && remoteFee <= config.teleportPolicy.maxRemoteFee;
+        if (
+            !_hasAssetAllowance(config.xcmPolicy.assetLimits, summary.primaryAssetId, summary.primaryAmount)
+                || summary.primaryAmount > config.remainingValue
+        ) {
+            return false;
+        }
+
+        return summary.selector == (summary.endpointKind == ENDPOINT_KIND_EXECUTE ? EXECUTE_PROGRAM_SELECTOR : DISPATCH_PROGRAM_SELECTOR);
     }
 
     function _validateAndConsumeDirectCall(SessionConfig storage config, bytes calldata executionCalldata)
@@ -248,44 +307,30 @@ contract SessionKeyValidatorModule is IERC7579Validator {
         return callValue;
     }
 
-    function _validateAndConsumeTeleport(SessionConfig storage config, bytes calldata executionCalldata)
+    function _validateAndConsumeXcmProgram(SessionConfig storage config, bytes calldata executionCalldata)
         private
         view
-        returns (uint128 amount)
+        returns (XcmProgramSummary memory summary)
     {
-        (
-            address target,
-            uint256 value,
-            bytes4 selector,
-            uint32 destinationParaId,
-            bytes32 beneficiaryAccountId32,
-            uint128 teleportAmount,
-            uint128 localFee,
-            uint128 remoteFee
-        ) = _decodeTeleportFromCalldata(executionCalldata);
+        summary = _decodeAndSummarizeXcmProgramFromCalldata(
+            executionCalldata, config.allowedTarget, config.xcmPolicy.allowedInstructionBitmap
+        );
 
-        if (target != config.allowedTarget || value != 0 || selector != EXECUTE_TELEPORT_SELECTOR) {
+        if (!_isEndpointAllowed(config.xcmPolicy.allowedEndpointBitmap, summary.endpointKind)) {
             revert UnauthorizedAction();
         }
-        if (destinationParaId != config.teleportPolicy.destinationParaId) {
+        if (!_isDestinationAllowed(config.xcmPolicy.allowedDestinationParaIds, summary.destinationParaId)) {
             revert UnauthorizedAction();
         }
-        if (
-            config.teleportPolicy.beneficiaryAccountId32 != bytes32(0)
-                && beneficiaryAccountId32 != config.teleportPolicy.beneficiaryAccountId32
-        ) {
+        if (!_isBeneficiaryAllowed(config.xcmPolicy.allowedBeneficiaries, summary.beneficiaryAccountId32)) {
             revert UnauthorizedAction();
         }
-        if (teleportAmount > uint256(config.remainingValue)) {
+        if (!_hasAssetAllowance(config.xcmPolicy.assetLimits, summary.primaryAssetId, summary.primaryAmount)) {
+            revert UnauthorizedAction();
+        }
+        if (summary.primaryAmount > uint256(config.remainingValue)) {
             revert ValueBudgetExceeded();
         }
-        if (
-            teleportAmount > config.teleportPolicy.maxTeleportAmount || localFee > config.teleportPolicy.maxLocalFee
-                || remoteFee > config.teleportPolicy.maxRemoteFee
-        ) {
-            revert UnauthorizedAction();
-        }
-        return teleportAmount;
     }
 
     function isValidSignatureWithSender(address, bytes32 hash, bytes calldata signature)
@@ -351,22 +396,20 @@ contract SessionKeyValidatorModule is IERC7579Validator {
         selector = bytes4(executionCalldata[52:56]);
     }
 
-    function _decodeTeleportFromMemory(bytes memory executionCalldata)
+    function _decodeAndSummarizeXcmProgramFromMemory(
+        bytes memory executionCalldata,
+        address allowedTarget,
+        uint256 allowedInstructionBitmap
+    )
         private
         pure
-        returns (
-            address target,
-            uint256 value,
-            bytes4 selector,
-            uint32 destinationParaId,
-            bytes32 beneficiaryAccountId32,
-            uint128 amount,
-            uint128 localFee,
-            uint128 remoteFee
-        )
+        returns (XcmProgramSummary memory)
     {
-        (target, value, selector) = _decodeCallFromMemory(executionCalldata);
-        if (selector != EXECUTE_TELEPORT_SELECTOR) {
+        (address target, uint256 value, bytes4 selector) = _decodeCallFromMemory(executionCalldata);
+        if (target != allowedTarget || value != 0) {
+            revert UnauthorizedAction();
+        }
+        if (selector != EXECUTE_PROGRAM_SELECTOR && selector != DISPATCH_PROGRAM_SELECTOR) {
             revert UnauthorizedAction();
         }
 
@@ -380,41 +423,92 @@ contract SessionKeyValidatorModule is IERC7579Validator {
             params[i] = callData[i + 4];
         }
 
-        TeleportConfig memory config;
-        (, config) = abi.decode(params, (bytes32, TeleportConfig));
-        destinationParaId = config.destinationParaId;
-        beneficiaryAccountId32 = config.beneficiaryAccountId32;
-        amount = config.amount;
-        localFee = config.localFee;
-        remoteFee = config.remoteFee;
+        (bytes32 requestId, XcmProgram memory program) = abi.decode(params, (bytes32, XcmProgram));
+        requestId;
+        return _summarizeProgram(program, selector, allowedInstructionBitmap);
     }
 
-    function _decodeTeleportFromCalldata(bytes calldata executionCalldata)
+    function _decodeAndSummarizeXcmProgramFromCalldata(
+        bytes calldata executionCalldata,
+        address allowedTarget,
+        uint256 allowedInstructionBitmap
+    )
         private
         pure
-        returns (
-            address target,
-            uint256 value,
-            bytes4 selector,
-            uint32 destinationParaId,
-            bytes32 beneficiaryAccountId32,
-            uint128 amount,
-            uint128 localFee,
-            uint128 remoteFee
-        )
+        returns (XcmProgramSummary memory)
     {
-        (target, value, selector) = _decodeCallFromCalldata(executionCalldata);
-        if (selector != EXECUTE_TELEPORT_SELECTOR) {
+        (address target, uint256 value, bytes4 selector) = _decodeCallFromCalldata(executionCalldata);
+        if (target != allowedTarget || value != 0) {
+            revert UnauthorizedAction();
+        }
+        if (selector != EXECUTE_PROGRAM_SELECTOR && selector != DISPATCH_PROGRAM_SELECTOR) {
             revert UnauthorizedAction();
         }
 
-        TeleportConfig memory config;
-        (, config) = abi.decode(executionCalldata[56:], (bytes32, TeleportConfig));
-        destinationParaId = config.destinationParaId;
-        beneficiaryAccountId32 = config.beneficiaryAccountId32;
-        amount = config.amount;
-        localFee = config.localFee;
-        remoteFee = config.remoteFee;
+        bytes memory params = new bytes(executionCalldata.length - 56);
+        for (uint256 i = 0; i < params.length; i++) {
+            params[i] = executionCalldata[i + 56];
+        }
+
+        (bytes32 requestId, XcmProgram memory program) = abi.decode(params, (bytes32, XcmProgram));
+        requestId;
+        return _summarizeProgram(program, selector, allowedInstructionBitmap);
+    }
+
+    function _summarizeProgram(XcmProgram memory program, bytes4 selector, uint256 allowedInstructionBitmap)
+        private
+        pure
+        returns (XcmProgramSummary memory summary)
+    {
+        if (program.instructions.length != 4) {
+            revert UnauthorizedAction();
+        }
+
+        XcmInstruction memory withdrawInstruction = program.instructions[0];
+        XcmInstruction memory payFeesInstruction = program.instructions[1];
+        XcmInstruction memory transferInstruction = program.instructions[2];
+        XcmInstruction memory depositInstruction = program.instructions[3];
+
+        if (
+            withdrawInstruction.kind != XCM_INSTRUCTION_WITHDRAW_ASSET
+                || payFeesInstruction.kind != XCM_INSTRUCTION_PAY_FEES
+                || transferInstruction.kind != XCM_INSTRUCTION_INITIATE_TRANSFER
+                || depositInstruction.kind != XCM_INSTRUCTION_DEPOSIT_ASSET
+        ) {
+            revert UnauthorizedAction();
+        }
+        if (
+            !_isInstructionAllowed(allowedInstructionBitmap, withdrawInstruction.kind)
+                || !_isInstructionAllowed(allowedInstructionBitmap, payFeesInstruction.kind)
+                || !_isInstructionAllowed(allowedInstructionBitmap, transferInstruction.kind)
+                || !_isInstructionAllowed(allowedInstructionBitmap, depositInstruction.kind)
+        ) {
+            revert UnauthorizedAction();
+        }
+        if (
+            withdrawInstruction.amount == 0 || payFeesInstruction.amount == 0 || transferInstruction.amount == 0
+                || withdrawInstruction.amount <= payFeesInstruction.amount + transferInstruction.amount
+        ) {
+            revert UnauthorizedAction();
+        }
+        if (
+            (selector == EXECUTE_PROGRAM_SELECTOR && program.endpointKind != ENDPOINT_KIND_EXECUTE)
+                || (selector == DISPATCH_PROGRAM_SELECTOR && program.endpointKind != ENDPOINT_KIND_SEND)
+        ) {
+            revert UnauthorizedAction();
+        }
+        if (transferInstruction.paraId == 0 || depositInstruction.accountId32 == bytes32(0)) {
+            revert UnauthorizedAction();
+        }
+
+        summary = XcmProgramSummary({
+            endpointKind: program.endpointKind,
+            selector: selector,
+            primaryAssetId: withdrawInstruction.assetId,
+            primaryAmount: withdrawInstruction.amount,
+            destinationParaId: transferInstruction.paraId,
+            beneficiaryAccountId32: depositInstruction.accountId32
+        });
     }
 
     function _recover(bytes32 digest, bytes memory signature) private pure returns (address) {
@@ -430,9 +524,80 @@ contract SessionKeyValidatorModule is IERC7579Validator {
             s := mload(add(signature, 64))
             v := byte(0, mload(add(signature, 96)))
         }
+
         if (v < 27) {
             v += 27;
         }
+
         return ecrecover(digest, v, r, s);
+    }
+
+    function _instructionBitmap(uint8[] memory instructionKinds) private pure returns (uint256 bitmap) {
+        for (uint256 i = 0; i < instructionKinds.length; i++) {
+            bitmap |= _instructionBit(instructionKinds[i]);
+        }
+    }
+
+    function _endpointBitmap(uint8[] memory endpointKinds) private pure returns (uint256 bitmap) {
+        for (uint256 i = 0; i < endpointKinds.length; i++) {
+            bitmap |= (1 << endpointKinds[i]);
+        }
+    }
+
+    function _instructionBit(uint8 instructionKind) private pure returns (uint256) {
+        return 1 << instructionKind;
+    }
+
+    function _isInstructionAllowed(uint256 bitmap, uint8 instructionKind) private pure returns (bool) {
+        return (bitmap & _instructionBit(instructionKind)) != 0;
+    }
+
+    function _isEndpointAllowed(uint256 bitmap, uint8 endpointKind) private pure returns (bool) {
+        return (bitmap & (1 << endpointKind)) != 0;
+    }
+
+    function _isDestinationAllowed(uint32[] storage allowedDestinations, uint32 destinationParaId)
+        private
+        view
+        returns (bool)
+    {
+        if (allowedDestinations.length == 0) {
+            return true;
+        }
+        for (uint256 i = 0; i < allowedDestinations.length; i++) {
+            if (allowedDestinations[i] == destinationParaId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function _isBeneficiaryAllowed(bytes32[] storage allowedBeneficiaries, bytes32 beneficiaryAccountId32)
+        private
+        view
+        returns (bool)
+    {
+        if (allowedBeneficiaries.length == 0) {
+            return true;
+        }
+        for (uint256 i = 0; i < allowedBeneficiaries.length; i++) {
+            if (allowedBeneficiaries[i] == beneficiaryAccountId32) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function _hasAssetAllowance(AssetLimit[] storage assetLimits, bytes32 assetId, uint128 amount)
+        private
+        view
+        returns (bool)
+    {
+        for (uint256 i = 0; i < assetLimits.length; i++) {
+            if (assetLimits[i].assetId == assetId) {
+                return amount <= assetLimits[i].maxAmount;
+            }
+        }
+        return false;
     }
 }

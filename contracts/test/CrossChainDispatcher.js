@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { network } from "hardhat";
-import { encodeAbiParameters, parseAbiParameters, stringToHex } from "viem";
+import { encodeAbiParameters, keccak256, parseAbiParameters, stringToHex } from "viem";
 import { deployFromArtifact, getContract, readArtifact } from "../scripts/common.js";
 
 const DESTINATION = encodeAbiParameters(
@@ -10,15 +10,29 @@ const DESTINATION = encodeAbiParameters(
   [1, 2004, "0x1111111111111111111111111111111111111111"]
 );
 const RAW_MESSAGE = stringToHex("hub-wallet-xcm");
-const TELEPORT_CONFIG = {
-  destinationParaId: 1004,
-  beneficiaryAccountId32: "0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48",
-  amount: 10_000_000_000n,
-  localFee: 1_000_000_000n,
-  remoteFee: 1_000_000_000n
+const PAS_ASSET_ID = keccak256(stringToHex("polkadot-hub/pas-native"));
+const PROGRAM = {
+  endpointKind: 0,
+  endpointParaId: 0,
+  instructions: [
+    { kind: 0, assetId: PAS_ASSET_ID, amount: 10_000_000_000n, paraId: 0, accountId32: zeroHash32() },
+    { kind: 2, assetId: PAS_ASSET_ID, amount: 1_000_000_000n, paraId: 0, accountId32: zeroHash32() },
+    { kind: 3, assetId: PAS_ASSET_ID, amount: 1_000_000_000n, paraId: 1004, accountId32: zeroHash32() },
+    {
+      kind: 4,
+      assetId: zeroHash32(),
+      amount: 0n,
+      paraId: 0,
+      accountId32: "0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48"
+    }
+  ]
 };
 const TELEPORT_MESSAGE =
   "0x050c00040100000700e40b54023001000002286bee31010100b10f0100000401000002286bee000400010204040d010204000101008eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48";
+
+function zeroHash32() {
+  return "0x0000000000000000000000000000000000000000000000000000000000000000";
+}
 
 describe("CrossChainDispatcher", async function () {
   const { viem } = await network.connect();
@@ -76,15 +90,15 @@ describe("CrossChainDispatcher", async function () {
   it("builds the same People teleport message on-chain as the working live format", async function () {
     const { dispatcher } = await deployFixture();
 
-    const encoded = await dispatcher.read.buildTeleportMessage([TELEPORT_CONFIG]);
+    const encoded = await dispatcher.read.buildProgram([PROGRAM]);
     assert.equal(encoded, TELEPORT_MESSAGE);
   });
 
-  it("executes a teleport built inside the dispatcher", async function () {
+  it("executes a typed program built inside the dispatcher", async function () {
     const { deployer, xcmPrecompile, dispatcher } = await deployFixture();
     const requestId = stringToHex("req-teleport", { size: 32 });
 
-    await dispatcher.write.executeTeleport([requestId, TELEPORT_CONFIG], { account: deployer.account });
+    await dispatcher.write.executeProgram([requestId, PROGRAM], { account: deployer.account });
 
     const events = await xcmPrecompile.getEvents.XcmExecuted();
     assert.equal(events.length > 0, true);

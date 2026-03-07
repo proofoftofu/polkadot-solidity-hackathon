@@ -18,18 +18,28 @@ import { deployFromArtifact, getContract, readArtifact } from "../scripts/common
 const BASE_MODE = zeroHash;
 const ERC1271_MAGIC_VALUE = "0x1626ba7e";
 const OPERATION_KIND_CALL = 0;
-const OPERATION_KIND_XCM_TELEPORT = 1;
-const TELEPORT_SELECTOR = "0x3dfb9f0d";
+const OPERATION_KIND_XCM_PROGRAM = 1;
+const ENDPOINT_KIND_EXECUTE = 0;
+const XCM_INSTRUCTION_WITHDRAW_ASSET = 0;
+const XCM_INSTRUCTION_PAY_FEES = 2;
+const XCM_INSTRUCTION_INITIATE_TRANSFER = 3;
+const XCM_INSTRUCTION_DEPOSIT_ASSET = 4;
+const XCM_PROGRAM_SELECTOR = "0x9d998c8f";
+const PAS_ASSET_ID = keccak256(stringToHex("polkadot-hub/pas-native"));
 const ROUTER_DESTINATION = encodeAbiParameters(
   [{ type: "uint8" }, { type: "uint32" }, { type: "bytes20" }],
   [1, 2004, "0x1111111111111111111111111111111111111111"]
 );
-const TELEPORT_CONFIG = {
-  destinationParaId: 1004,
-  beneficiaryAccountId32: "0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48",
-  amount: 10_000_000_000n,
-  localFee: 1_000_000_000n,
-  remoteFee: 1_000_000_000n
+const BENEFICIARY = "0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48";
+const XCM_PROGRAM = {
+  endpointKind: ENDPOINT_KIND_EXECUTE,
+  endpointParaId: 0,
+  instructions: [
+    { kind: 0, assetId: PAS_ASSET_ID, amount: 10_000_000_000n, paraId: 0, accountId32: zeroHash },
+    { kind: 2, assetId: PAS_ASSET_ID, amount: 1_000_000_000n, paraId: 0, accountId32: zeroHash },
+    { kind: 3, assetId: PAS_ASSET_ID, amount: 1_000_000_000n, paraId: 1004, accountId32: zeroHash },
+    { kind: 4, assetId: zeroHash, amount: 0n, paraId: 0, accountId32: BENEFICIARY }
+  ]
 };
 
 function encodeSingleExecution(target, value, callData) {
@@ -45,11 +55,11 @@ function sessionInitData(
   {
     sponsorshipAllowed = true,
     operationKind = OPERATION_KIND_CALL,
-    destinationParaId = 0,
-    beneficiaryAccountId32 = zeroHash,
-    maxTeleportAmount = 0n,
-    maxLocalFee = 0n,
-    maxRemoteFee = 0n,
+    allowedEndpointKinds = [],
+    allowedInstructionKinds = [],
+    allowedDestinationParaIds = [],
+    allowedBeneficiaries = [],
+    assetLimits = [],
     remainingCalls = 2,
     remainingValue = parseEther("1")
   } = {}
@@ -70,15 +80,14 @@ function sessionInitData(
           { type: "uint128" },
           { type: "bool" },
           { type: "uint8" },
+          { type: "uint8[]" },
+          { type: "uint8[]" }
+          ,
+          { type: "uint32[]" },
+          { type: "bytes32[]" },
           {
-            type: "tuple",
-            components: [
-              { type: "uint32" },
-              { type: "bytes32" },
-              { type: "uint128" },
-              { type: "uint128" },
-              { type: "uint128" }
-            ]
+            type: "tuple[]",
+            components: [{ type: "bytes32" }, { type: "uint128" }]
           }
         ]
       }
@@ -96,26 +105,24 @@ function sessionInitData(
         remainingValue,
         sponsorshipAllowed,
         operationKind,
-        [
-          destinationParaId,
-          beneficiaryAccountId32,
-          maxTeleportAmount,
-          maxLocalFee,
-          maxRemoteFee
-        ]
+        allowedEndpointKinds,
+        allowedInstructionKinds,
+        allowedDestinationParaIds,
+        allowedBeneficiaries,
+        assetLimits
       ]
     ]
   );
 }
 
-function encodeTeleportExecution(dispatcher, requestId, teleportConfig) {
+function encodeProgramExecution(dispatcher, requestId, program) {
   return encodeSingleExecution(
     dispatcher.address,
     0n,
     encodeFunctionData({
       abi: dispatcher.abi,
-      functionName: "executeTeleport",
-      args: [requestId, teleportConfig]
+      functionName: "executeProgram",
+      args: [requestId, program]
     })
   );
 }
@@ -348,21 +355,26 @@ describe("AgentSmartWallet", async function () {
     const chainId = BigInt(await publicClient.getChainId());
     const expiresAt = Number(latestBlock.timestamp + 3600n);
     const requestId = stringToHex("req-xcm", { size: 32 });
-    const executionCalldata = encodeTeleportExecution(dispatcher, requestId, TELEPORT_CONFIG);
+    const executionCalldata = encodeProgramExecution(dispatcher, requestId, XCM_PROGRAM);
 
     await wallet.write.installModule(
       [
         1n,
         validator.address,
-        sessionInitData(agent, dispatcher, TELEPORT_SELECTOR, expiresAt, chainId, {
+        sessionInitData(agent, dispatcher, XCM_PROGRAM_SELECTOR, expiresAt, chainId, {
           sponsorshipAllowed: false,
-          operationKind: OPERATION_KIND_XCM_TELEPORT,
-          destinationParaId: TELEPORT_CONFIG.destinationParaId,
-          beneficiaryAccountId32: TELEPORT_CONFIG.beneficiaryAccountId32,
-          maxTeleportAmount: TELEPORT_CONFIG.amount,
-          maxLocalFee: TELEPORT_CONFIG.localFee,
-          maxRemoteFee: TELEPORT_CONFIG.remoteFee,
-          remainingValue: TELEPORT_CONFIG.amount
+          operationKind: OPERATION_KIND_XCM_PROGRAM,
+          allowedEndpointKinds: [ENDPOINT_KIND_EXECUTE],
+          allowedInstructionKinds: [
+            XCM_INSTRUCTION_WITHDRAW_ASSET,
+            XCM_INSTRUCTION_PAY_FEES,
+            XCM_INSTRUCTION_INITIATE_TRANSFER,
+            XCM_INSTRUCTION_DEPOSIT_ASSET
+          ],
+          allowedDestinationParaIds: [1004],
+          allowedBeneficiaries: [BENEFICIARY],
+          assetLimits: [[PAS_ASSET_ID, 10_000_000_000n]],
+          remainingValue: 10_000_000_000n
         })
       ],
       { account: owner.account }
@@ -375,9 +387,9 @@ describe("AgentSmartWallet", async function () {
     const executed = await xcmPrecompile.getEvents.XcmExecuted();
     assert.equal(executed.length > 0, true);
 
-    const session = await validator.read.sessions([wallet.address]);
-    assert.equal(session[7], 1);
-    assert.equal(session[8], 0n);
+    const session = await validator.read.getSessionState([wallet.address]);
+    assert.equal(session[1], 1);
+    assert.equal(session[2], 0n);
   });
 
   it("rejects a session-key XCM teleport to an unauthorized parachain", async function () {
@@ -386,24 +398,34 @@ describe("AgentSmartWallet", async function () {
     const chainId = BigInt(await publicClient.getChainId());
     const expiresAt = Number(latestBlock.timestamp + 3600n);
     const requestId = stringToHex("req-xcm-bad", { size: 32 });
-    const executionCalldata = encodeTeleportExecution(dispatcher, requestId, {
-      ...TELEPORT_CONFIG,
-      destinationParaId: 2000
+    const executionCalldata = encodeProgramExecution(dispatcher, requestId, {
+      ...XCM_PROGRAM,
+      instructions: [
+        XCM_PROGRAM.instructions[0],
+        XCM_PROGRAM.instructions[1],
+        { ...XCM_PROGRAM.instructions[2], paraId: 2000 },
+        XCM_PROGRAM.instructions[3]
+      ]
     });
 
     await wallet.write.installModule(
       [
         1n,
         validator.address,
-        sessionInitData(agent, dispatcher, TELEPORT_SELECTOR, expiresAt, chainId, {
+        sessionInitData(agent, dispatcher, XCM_PROGRAM_SELECTOR, expiresAt, chainId, {
           sponsorshipAllowed: false,
-          operationKind: OPERATION_KIND_XCM_TELEPORT,
-          destinationParaId: TELEPORT_CONFIG.destinationParaId,
-          beneficiaryAccountId32: TELEPORT_CONFIG.beneficiaryAccountId32,
-          maxTeleportAmount: TELEPORT_CONFIG.amount,
-          maxLocalFee: TELEPORT_CONFIG.localFee,
-          maxRemoteFee: TELEPORT_CONFIG.remoteFee,
-          remainingValue: TELEPORT_CONFIG.amount
+          operationKind: OPERATION_KIND_XCM_PROGRAM,
+          allowedEndpointKinds: [ENDPOINT_KIND_EXECUTE],
+          allowedInstructionKinds: [
+            XCM_INSTRUCTION_WITHDRAW_ASSET,
+            XCM_INSTRUCTION_PAY_FEES,
+            XCM_INSTRUCTION_INITIATE_TRANSFER,
+            XCM_INSTRUCTION_DEPOSIT_ASSET
+          ],
+          allowedDestinationParaIds: [1004],
+          allowedBeneficiaries: [BENEFICIARY],
+          assetLimits: [[PAS_ASSET_ID, 10_000_000_000n]],
+          remainingValue: 10_000_000_000n
         })
       ],
       { account: owner.account }
