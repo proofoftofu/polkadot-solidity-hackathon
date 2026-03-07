@@ -1,17 +1,17 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import { ApiPromise, WsProvider } from "@polkadot/api";
 import dotenv from "dotenv";
+import solc from "solc";
 import {
   createPublicClient,
   createWalletClient,
-  encodeAbiParameters,
   getAddress,
   getContract as viemGetContract,
   http,
-  parseAbiParameters,
   publicActions,
-  stringToHex
+  parseAbiItem
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -20,24 +20,34 @@ dotenv.config({ path: path.join(process.cwd(), ".env") });
 const ROOT = process.cwd();
 const ARTIFACTS_DIR = path.join(ROOT, "artifacts", "contracts");
 const DEPLOYMENTS_DIR = path.join(ROOT, "deployments");
+const CONTRACTS_DIR = path.join(ROOT, "contracts");
+let compiledContractsPromise;
 
 export const NETWORKS = {
   polkadotTestnet: {
     key: "polkadotTestnet",
     rpcUrl: process.env.POLKADOT_RPC_URL ?? "https://services.polkadothub-rpc.com/testnet",
+    wsUrl: process.env.POLKADOT_WS_URL ?? "wss://testnet-passet-hub.polkadot.io",
     chainId: 420420417,
     label: "Polkadot Hub Testnet"
   },
   moonbaseAlpha: {
     key: "moonbaseAlpha",
     rpcUrl: process.env.MOONBASE_RPC_URL ?? "https://rpc.api.moonbase.moonbeam.network",
+    wsUrl: process.env.MOONBASE_WS_URL ?? "wss://wss.api.moonbase.moonbeam.network",
     chainId: 1287,
     label: "Moonbase Alpha"
   }
 };
 
 export const XCM_PRECOMPILE = "0x00000000000000000000000000000000000a0000";
-export const DEFAULT_MESSAGE_PREFIX = stringToHex("TOFU_XCM_V1");
+export const DEFAULT_MOONBASE_PARA_ID = Number.parseInt(process.env.MOONBASE_PARA_ID ?? "1000", 10);
+export const DEFAULT_XCM_FEE_WEI = BigInt(process.env.XCM_FEE_WEI ?? "10000000000000000");
+export const DEFAULT_TRANSACT_GAS_LIMIT = BigInt(process.env.XCM_TRANSACT_GAS_LIMIT ?? "300000");
+export const DEFAULT_TRANSACT_REF_TIME = BigInt(process.env.XCM_TRANSACT_REF_TIME ?? "5000000000");
+export const DEFAULT_TRANSACT_PROOF_SIZE = BigInt(process.env.XCM_TRANSACT_PROOF_SIZE ?? "200000");
+const SUBSTRATE_WS_RETRIES = Number.parseInt(process.env.SUBSTRATE_WS_RETRIES ?? "3", 10);
+const SUBSTRATE_WS_RETRY_DELAY_MS = Number.parseInt(process.env.SUBSTRATE_WS_RETRY_DELAY_MS ?? "1500", 10);
 
 function chainConfig(name) {
   const config = NETWORKS[name];
@@ -71,22 +81,130 @@ export function createClients(networkName) {
   const transport = http(config.rpcUrl);
   const publicClient = createPublicClient({ chain, transport });
   const walletClient = createWalletClient({ account, chain, transport }).extend(publicActions);
-  return { config, account, publicClient, walletClient };
+  const nonceManager = {
+    value: undefined,
+    async next() {
+      if (this.value === undefined) {
+        this.value = await publicClient.getTransactionCount({
+          address: account.address,
+          blockTag: "pending"
+        });
+      }
+      const nonce = this.value;
+      this.value += 1;
+      return nonce;
+    }
+  };
+  return { config, account, publicClient, walletClient, nonceManager };
+}
+
+export async function createSubstrateApi(networkName) {
+  let lastError;
+
+  for (let attempt = 1; attempt <= SUBSTRATE_WS_RETRIES; attempt += 1) {
+    try {
+      const provider = new WsProvider(NETWORKS[networkName].wsUrl);
+      const api = await ApiPromise.create({ provider });
+      await api.isReady;
+      return api;
+    } catch (error) {
+      lastError = error;
+      if (attempt < SUBSTRATE_WS_RETRIES) {
+        await new Promise((resolve) => setTimeout(resolve, SUBSTRATE_WS_RETRY_DELAY_MS * attempt));
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+async function getSoliditySources(dir, prefix = "contracts") {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const sources = {};
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    const relativePath = path.join(prefix, entry.name);
+    if (entry.isDirectory()) {
+      Object.assign(sources, await getSoliditySources(fullPath, relativePath));
+      continue;
+    }
+    if (!entry.name.endsWith(".sol")) {
+      continue;
+    }
+    sources[relativePath] = {
+      content: await fs.readFile(fullPath, "utf8")
+    };
+  }
+
+  return sources;
+}
+
+async function compileContracts() {
+  const sources = await getSoliditySources(CONTRACTS_DIR);
+  const input = {
+    language: "Solidity",
+    sources,
+    settings: {
+      optimizer: {
+        enabled: true,
+        runs: 200
+      },
+      outputSelection: {
+        "*": {
+          "*": ["abi", "evm.bytecode.object"]
+        }
+      }
+    }
+  };
+
+  const output = JSON.parse(solc.compile(JSON.stringify(input)));
+  if (output.errors) {
+    const errors = output.errors.filter((entry) => entry.severity === "error");
+    if (errors.length > 0) {
+      throw new Error(errors.map((entry) => entry.formattedMessage).join("\n\n"));
+    }
+  }
+
+  return output.contracts;
 }
 
 export async function readArtifact(contractFile, contractName = contractFile.replace(/\.sol$/, "")) {
+  compiledContractsPromise ??= compileContracts();
+  const contracts = await compiledContractsPromise;
+  const sourcePath = path.join("contracts", contractFile);
+  const contract = contracts[sourcePath]?.[contractName];
+  if (contract) {
+    return {
+      abi: contract.abi,
+      bytecode: `0x${contract.evm.bytecode.object}`
+    };
+  }
+
   const file = path.join(ARTIFACTS_DIR, contractFile, `${contractName}.json`);
-  return JSON.parse(await fs.readFile(file, "utf8"));
+  const artifact = JSON.parse(await fs.readFile(file, "utf8"));
+  if (!artifact.abi || !artifact.bytecode) {
+    throw new Error(`Artifact not found for ${sourcePath}:${contractName}`);
+  }
+  return artifact;
 }
 
-export async function deployFromArtifact(walletClient, publicClient, artifact, args = []) {
+export async function deployFromArtifact(walletClient, publicClient, artifact, args = [], nonceManager) {
   const hash = await walletClient.deployContract({
     abi: artifact.abi,
     bytecode: artifact.bytecode,
-    args
+    args,
+    nonce: nonceManager ? await nonceManager.next() : undefined
   });
   const receipt = await publicClient.waitForTransactionReceipt({ hash });
   return getAddress(receipt.contractAddress);
+}
+
+export async function writeContract(contractWrite, args, publicClient, nonceManager) {
+  const hash = await contractWrite(args, {
+    nonce: nonceManager ? await nonceManager.next() : undefined
+  });
+  return publicClient.waitForTransactionReceipt({ hash });
 }
 
 export async function getContract(walletClient, publicClient, artifact, address) {
@@ -122,9 +240,122 @@ export async function updateAddressesIndex(networkName, deployment) {
   await fs.writeFile(file, `${JSON.stringify(index, null, 2)}\n`);
 }
 
-export function buildMoonbeamDestination(accountKey20) {
-  return encodeAbiParameters(
-    parseAbiParameters("uint8 parents, uint32 paraId, bytes20 accountKey20"),
-    [1, 2004, getAddress(accountKey20)]
+function createTypeWithFallback(api, typeNames, value) {
+  let lastError;
+  for (const typeName of typeNames) {
+    try {
+      return api.createType(typeName, value);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError;
+}
+
+export function encodeVersionedLocation(api, paraId, parents = 1) {
+  return createTypeWithFallback(
+    api,
+    ["XcmVersionedLocation", "VersionedLocation", "StagingXcmVersionedLocation"],
+    {
+      V4: {
+        parents,
+        interior: {
+          X1: [{ Parachain: paraId }]
+        }
+      }
+    }
+  ).toHex();
+}
+
+export function encodeVersionedXcm(api, instructions) {
+  return createTypeWithFallback(api, ["XcmVersionedXcm", "VersionedXcm", "StagingXcmVersionedXcm"], {
+    V4: instructions
+  }).toHex();
+}
+
+export function buildMoonbeamTransactCall(moonbeamApi, target, input, gasLimit = DEFAULT_TRANSACT_GAS_LIMIT) {
+  return moonbeamApi.tx.ethereumXcm
+    .transact({
+      V2: {
+        gasLimit,
+        action: {
+          Call: getAddress(target)
+        },
+        value: 0,
+        input
+      }
+    })
+    .method.toHex();
+}
+
+export function buildMoonbeamExecutionMessage(
+  hubApi,
+  ethereumXcmCall,
+  {
+    feeAmount = DEFAULT_XCM_FEE_WEI,
+    requireWeightAtMost = {
+      refTime: DEFAULT_TRANSACT_REF_TIME,
+      proofSize: DEFAULT_TRANSACT_PROOF_SIZE
+    }
+  } = {}
+) {
+  const feeAsset = {
+    id: {
+      Concrete: {
+        parents: 0,
+        interior: {
+          X1: [{ PalletInstance: 3 }]
+        }
+      }
+    },
+    fun: {
+      Fungible: feeAmount
+    }
+  };
+
+  return encodeVersionedXcm(hubApi, [
+    { WithdrawAsset: [feeAsset] },
+    {
+      BuyExecution: {
+        fees: feeAsset,
+        weightLimit: "Unlimited"
+      }
+    },
+    {
+      Transact: {
+        originKind: "SovereignAccount",
+        requireWeightAtMost,
+        call: {
+          encoded: ethereumXcmCall
+        }
+      }
+    }
+  ]);
+}
+
+export async function waitForRemoteExecutionLog(publicClient, target, requestId, fromBlock) {
+  const timeoutMs = Number.parseInt(process.env.XCM_RESULT_TIMEOUT_MS ?? "180000", 10);
+  const pollMs = Number.parseInt(process.env.XCM_RESULT_POLL_MS ?? "5000", 10);
+  const event = parseAbiItem(
+    "event RemoteExecutionRecorded(address indexed caller, bytes32 indexed requestId, bytes32 indexed memo)"
+  );
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const logs = await publicClient.getLogs({
+      address: getAddress(target),
+      event,
+      args: { requestId },
+      fromBlock
+    });
+    if (logs.length > 0) {
+      return logs[0];
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+
+  throw new Error(
+    "Timed out waiting for Moonbeam execution log. The XCM may still be pending or the destination origin may need fee funding."
   );
 }

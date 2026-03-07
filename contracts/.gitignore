@@ -11,6 +11,7 @@ deployments/abi/
 
 .env
 .env.*
+!.env.example
 *.local
 
 *.log

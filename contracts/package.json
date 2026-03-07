@@ -16,6 +16,8 @@
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox-viem": "^5.0.3",
+    "@polkadot/api": "^16.5.4",
+    "@polkadot/util-crypto": "^14.0.1",
     "dotenv": "^17.3.1",
     "hardhat": "^3.1.11",
     "solc": "^0.8.28"

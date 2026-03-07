@@ -1,9 +1,17 @@
-import { createClients, getContract, readArtifact, readDeployment, updateAddressesIndex, writeDeployment } from "./common.js";
+import {
+  createClients,
+  getContract,
+  readArtifact,
+  readDeployment,
+  updateAddressesIndex,
+  writeContract,
+  writeDeployment
+} from "./common.js";
 
 async function main() {
   const hubDeployment = await readDeployment("polkadotTestnet");
   const moonbeamDeployment = await readDeployment("moonbaseAlpha");
-  const { publicClient, walletClient } = createClients("polkadotTestnet");
+  const { publicClient, walletClient, nonceManager } = createClients("polkadotTestnet");
 
   const dispatcherArtifact = await readArtifact("CrossChainDispatcher.sol", "CrossChainDispatcher");
   const dispatcher = await getContract(
@@ -12,15 +20,18 @@ async function main() {
     dispatcherArtifact,
     hubDeployment.contracts.crossChainDispatcher
   );
-  await publicClient.waitForTransactionReceipt({
-    hash: await dispatcher.write.setAllowedReceiver([moonbeamDeployment.contracts.crossChainReceiver, true])
-  });
+  await writeContract(
+    dispatcher.write.setAllowedReceiver,
+    [moonbeamDeployment.contracts.crossChainTarget, true],
+    publicClient,
+    nonceManager
+  );
 
-  hubDeployment.contracts.allowedReceiver = moonbeamDeployment.contracts.crossChainReceiver;
+  hubDeployment.contracts.allowedReceiver = moonbeamDeployment.contracts.crossChainTarget;
   await writeDeployment("polkadotTestnet", hubDeployment);
   await updateAddressesIndex("polkadotTestnet", hubDeployment);
 
-  console.log(`Allowed Moonbeam receiver ${moonbeamDeployment.contracts.crossChainReceiver} on Hub dispatcher.`);
+  console.log(`Allowed Moonbeam target ${moonbeamDeployment.contracts.crossChainTarget} on Hub dispatcher.`);
 }
 
 main().catch((error) => {

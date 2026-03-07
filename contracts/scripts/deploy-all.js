@@ -1,18 +1,20 @@
 import {
-  DEFAULT_MESSAGE_PREFIX,
+  DEFAULT_MOONBASE_PARA_ID,
   NETWORKS,
   XCM_PRECOMPILE,
-  buildMoonbeamDestination,
   createClients,
+  createSubstrateApi,
   deployFromArtifact,
+  encodeVersionedLocation,
   getContract,
   readArtifact,
   updateAddressesIndex,
+  writeContract,
   writeDeployment
 } from "./common.js";
 
 async function deployPolkadotHub() {
-  const { account, publicClient, walletClient } = createClients("polkadotTestnet");
+  const { account, publicClient, walletClient, nonceManager } = createClients("polkadotTestnet");
 
   const entryPointArtifact = await readArtifact("mocks/MockEntryPoint.sol", "MockEntryPoint");
   const walletFactoryArtifact = await readArtifact("WalletFactory.sol", "WalletFactory");
@@ -20,30 +22,31 @@ async function deployPolkadotHub() {
   const executionArtifact = await readArtifact("ExecutionModule.sol", "ExecutionModule");
   const paymasterArtifact = await readArtifact("SponsoredExecutionPaymaster.sol", "SponsoredExecutionPaymaster");
   const dispatcherArtifact = await readArtifact("CrossChainDispatcher.sol", "CrossChainDispatcher");
+  const hubApi = await createSubstrateApi("polkadotTestnet");
 
-  const entryPoint = await deployFromArtifact(walletClient, publicClient, entryPointArtifact);
-  const walletFactory = await deployFromArtifact(walletClient, publicClient, walletFactoryArtifact, [entryPoint]);
-  const sessionKeyValidatorModule = await deployFromArtifact(walletClient, publicClient, validatorArtifact);
-  const executionModule = await deployFromArtifact(walletClient, publicClient, executionArtifact);
-  const sponsoredExecutionPaymaster = await deployFromArtifact(walletClient, publicClient, paymasterArtifact, [
-    account.address,
-    entryPoint
-  ]);
+  const entryPoint = await deployFromArtifact(walletClient, publicClient, entryPointArtifact, [], nonceManager);
+  const walletFactory =
+    await deployFromArtifact(walletClient, publicClient, walletFactoryArtifact, [entryPoint], nonceManager);
+  const sessionKeyValidatorModule =
+    await deployFromArtifact(walletClient, publicClient, validatorArtifact, [], nonceManager);
+  const executionModule =
+    await deployFromArtifact(walletClient, publicClient, executionArtifact, [], nonceManager);
+  const sponsoredExecutionPaymaster = await deployFromArtifact(
+    walletClient,
+    publicClient,
+    paymasterArtifact,
+    [account.address, entryPoint],
+    nonceManager
+  );
 
-  const moonbeamAccountKey20 = process.env.MOONBEAM_ACCOUNT_KEY20 ?? account.address;
-  const moonbeamDestination = process.env.MOONBEAM_DESTINATION ?? buildMoonbeamDestination(moonbeamAccountKey20);
-  const messagePrefix = process.env.XCM_MESSAGE_PREFIX ?? DEFAULT_MESSAGE_PREFIX;
-  const crossChainDispatcher = await deployFromArtifact(walletClient, publicClient, dispatcherArtifact, [
-    account.address,
-    XCM_PRECOMPILE,
-    BigInt(NETWORKS.moonbaseAlpha.chainId),
-    moonbeamDestination
-  ]);
-
-  const dispatcher = await getContract(walletClient, publicClient, dispatcherArtifact, crossChainDispatcher);
-  await publicClient.waitForTransactionReceipt({
-    hash: await dispatcher.write.setMessagePrefix([messagePrefix])
-  });
+  const moonbeamDestination = encodeVersionedLocation(hubApi, DEFAULT_MOONBASE_PARA_ID, 1);
+  const crossChainDispatcher = await deployFromArtifact(
+    walletClient,
+    publicClient,
+    dispatcherArtifact,
+    [account.address, XCM_PRECOMPILE, BigInt(NETWORKS.moonbaseAlpha.chainId), moonbeamDestination],
+    nonceManager
+  );
 
   const deployment = {
     network: "polkadotTestnet",
@@ -57,28 +60,22 @@ async function deployPolkadotHub() {
       sponsoredExecutionPaymaster,
       crossChainDispatcher,
       moonbeamDestination,
-      xcmPrecompile: XCM_PRECOMPILE,
-      messagePrefix
+      moonbaseParaId: DEFAULT_MOONBASE_PARA_ID,
+      xcmPrecompile: XCM_PRECOMPILE
     }
   };
 
+  await hubApi.disconnect();
   await writeDeployment("polkadotTestnet", deployment);
   await updateAddressesIndex("polkadotTestnet", deployment);
   return deployment;
 }
 
 async function deployMoonbeam(hubDeployment) {
-  const { account, publicClient, walletClient } = createClients("moonbaseAlpha");
+  const { account, publicClient, walletClient, nonceManager } = createClients("moonbaseAlpha");
 
   const targetArtifact = await readArtifact("mocks/MockTarget.sol", "MockTarget");
-  const receiverArtifact = await readArtifact("CrossChainReceiver.sol", "CrossChainReceiver");
-
-  const crossChainTarget = await deployFromArtifact(walletClient, publicClient, targetArtifact);
-  const trustedRelayer = process.env.MOONBEAM_TRUSTED_RELAYER ?? account.address;
-  const crossChainReceiver = await deployFromArtifact(walletClient, publicClient, receiverArtifact, [
-    trustedRelayer,
-    hubDeployment.contracts.crossChainDispatcher
-  ]);
+  const crossChainTarget = await deployFromArtifact(walletClient, publicClient, targetArtifact, [], nonceManager);
 
   const deployment = {
     network: "moonbaseAlpha",
@@ -86,8 +83,6 @@ async function deployMoonbeam(hubDeployment) {
     chainId: NETWORKS.moonbaseAlpha.chainId,
     contracts: {
       crossChainTarget,
-      crossChainReceiver,
-      trustedRelayer,
       trustedHubDispatcher: hubDeployment.contracts.crossChainDispatcher
     }
   };
@@ -98,7 +93,7 @@ async function deployMoonbeam(hubDeployment) {
 }
 
 async function configureHubAllowlist(hubDeployment, moonbeamDeployment) {
-  const { publicClient, walletClient } = createClients("polkadotTestnet");
+  const { publicClient, walletClient, nonceManager } = createClients("polkadotTestnet");
   const dispatcherArtifact = await readArtifact("CrossChainDispatcher.sol", "CrossChainDispatcher");
   const dispatcher = await getContract(
     walletClient,
@@ -107,9 +102,12 @@ async function configureHubAllowlist(hubDeployment, moonbeamDeployment) {
     hubDeployment.contracts.crossChainDispatcher
   );
 
-  await publicClient.waitForTransactionReceipt({
-    hash: await dispatcher.write.setAllowedReceiver([moonbeamDeployment.contracts.crossChainReceiver, true])
-  });
+  await writeContract(
+    dispatcher.write.setAllowedReceiver,
+    [moonbeamDeployment.contracts.crossChainTarget, true],
+    publicClient,
+    nonceManager
+  );
 }
 
 async function main() {
@@ -119,7 +117,6 @@ async function main() {
 
   console.log("Deployed contracts to both networks.");
   console.log(`Polkadot Hub dispatcher: ${hubDeployment.contracts.crossChainDispatcher}`);
-  console.log(`Moonbase receiver: ${moonbeamDeployment.contracts.crossChainReceiver}`);
   console.log(`Moonbase target: ${moonbeamDeployment.contracts.crossChainTarget}`);
 }
 

@@ -21,13 +21,19 @@ This workspace implements the MVP blockchain layer described in the hackathon do
 - `ExecutionModule`
 - `SponsoredExecutionPaymaster`
 - `CrossChainDispatcher`
-- `CrossChainReceiver`
+- `MockTarget` on Moonbase Alpha for the deployed smoke test
 
 The cross-chain dispatcher is wired to the real Polkadot Hub XCM precompile shape. For local tests we swap in a mock precompile and mock Moonbeam router, while keeping the same dispatcher interface.
 
 ## Setup
 
 Copy `.env.example` to `.env` and fill in the values you need.
+
+Example:
+
+```bash
+cp .env.example .env
+```
 
 Hardhat and the standalone scripts now load `.env` via `dotenv`.
 
@@ -41,10 +47,16 @@ For live two-chain deployment, these env vars are the important ones:
 
 - `PRIVATE_KEY`
 - `POLKADOT_RPC_URL` optional override
+- `POLKADOT_WS_URL` required for Substrate/XCM metadata access
 - `MOONBASE_RPC_URL` optional override
-- `MOONBEAM_ACCOUNT_KEY20` optional Moonbeam destination account for the Hub-side destination bytes
-- `MOONBEAM_TRUSTED_RELAYER` optional address allowed to finalize the remote call in the smoke test
-- `XCM_MESSAGE_PREFIX` optional message version tag
+- `MOONBASE_WS_URL` required for Moonbeam runtime metadata access
+- `MOONBASE_PARA_ID` optional override, default `1000`
+- `XCM_FEE_WEI` optional Moonbase fee amount for `BuyExecution`
+- `XCM_TRANSACT_GAS_LIMIT` optional Moonbeam EVM gas limit
+- `XCM_TRANSACT_REF_TIME` optional XCM transact ref time
+- `XCM_TRANSACT_PROOF_SIZE` optional XCM transact proof size
+- `SUBSTRATE_WS_RETRIES` optional retry count for Substrate WS connects
+- `SUBSTRATE_WS_RETRY_DELAY_MS` optional retry backoff base in milliseconds
 
 ## Deploy Both Chains
 
@@ -69,7 +81,7 @@ If you deploy the two chains separately, run:
 npm run configure:hub
 ```
 
-That updates the Hub dispatcher allowlist to trust the deployed Moonbeam receiver.
+That updates the Hub dispatcher allowlist to trust the deployed Moonbeam target.
 
 ## Test Deployed Flow
 
@@ -82,10 +94,11 @@ npm run test:deployed
 The script:
 
 - loads the saved Hub and Moonbeam deployment manifests
+- builds a real SCALE-encoded XCM program for Moonbase Alpha
 - submits a Hub dispatch transaction to the real Polkadot Hub XCM precompile-facing dispatcher
-- then completes a Moonbeam smoke execution against the deployed receiver and target contracts
+- waits for the Moonbase target event and prints the Moonbase-side transaction hash
 
-The Hub leg is a real testnet transaction. The Moonbeam completion step is a trusted-relayer smoke path driven by `MOONBEAM_TRUSTED_RELAYER`, so it verifies the deployed contract path across both chains even though it does not prove end-to-end live XCM delivery by itself.
+The local unit tests still use mocks. The deployed smoke path is intended to use real XCM. If the Moonbase event never appears, the most likely issue is destination-side fee funding for the origin that executes the remote EVM call.
 
 ## Moonbase Alpha wallet info
 

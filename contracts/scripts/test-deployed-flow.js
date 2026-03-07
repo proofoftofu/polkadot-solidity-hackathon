@@ -1,10 +1,17 @@
 import {
+  DEFAULT_MOONBASE_PARA_ID,
+  buildMoonbeamExecutionMessage,
+  buildMoonbeamTransactCall,
   createClients,
+  createSubstrateApi,
+  encodeVersionedLocation,
   getContract,
   readArtifact,
-  readDeployment
+  readDeployment,
+  waitForRemoteExecutionLog,
+  writeContract
 } from "./common.js";
-import { decodeAbiParameters, encodeFunctionData, getAddress, parseAbiParameters, stringToHex } from "viem";
+import { encodeFunctionData, getAddress, stringToHex } from "viem";
 
 async function main() {
   const hubDeployment = await readDeployment("polkadotTestnet");
@@ -12,9 +19,10 @@ async function main() {
 
   const hub = createClients("polkadotTestnet");
   const moonbeam = createClients("moonbaseAlpha");
+  const hubApi = await createSubstrateApi("polkadotTestnet");
+  const moonbeamApi = await createSubstrateApi("moonbaseAlpha");
 
   const dispatcherArtifact = await readArtifact("CrossChainDispatcher.sol", "CrossChainDispatcher");
-  const receiverArtifact = await readArtifact("CrossChainReceiver.sol", "CrossChainReceiver");
   const targetArtifact = await readArtifact("mocks/MockTarget.sol", "MockTarget");
 
   const dispatcher = await getContract(
@@ -22,12 +30,6 @@ async function main() {
     hub.publicClient,
     dispatcherArtifact,
     hubDeployment.contracts.crossChainDispatcher
-  );
-  const receiver = await getContract(
-    moonbeam.walletClient,
-    moonbeam.publicClient,
-    receiverArtifact,
-    moonbeamDeployment.contracts.crossChainReceiver
   );
   const target = await getContract(
     moonbeam.walletClient,
@@ -38,56 +40,62 @@ async function main() {
 
   const memo = stringToHex(`memo-${Date.now()}`, { size: 32 });
   const requestId = stringToHex(`req-${Date.now()}`, { size: 32 });
-  const remoteCall = {
-    destinationChainId: BigInt(hubDeployment.contracts.moonbeamDestination ? 1287 : moonbeamDeployment.chainId),
-    receiver: moonbeamDeployment.contracts.crossChainReceiver,
-    target: moonbeamDeployment.contracts.crossChainTarget,
-    value: 0n,
-    callData: encodeFunctionData({
-      abi: targetArtifact.abi,
-      functionName: "recordMemo",
-      args: [memo]
-    }),
-    requestId
-  };
+  const remoteCallData = encodeFunctionData({
+    abi: targetArtifact.abi,
+    functionName: "recordRemoteExecution",
+    args: [requestId, memo]
+  });
+  const moonbeamEthereumXcmCall = buildMoonbeamTransactCall(
+    moonbeamApi,
+    moonbeamDeployment.contracts.crossChainTarget,
+    remoteCallData
+  );
+  const encodedMessage = buildMoonbeamExecutionMessage(hubApi, moonbeamEthereumXcmCall);
+  const encodedDestination =
+    hubDeployment.contracts.moonbeamDestination ??
+    encodeVersionedLocation(hubApi, hubDeployment.contracts.moonbaseParaId ?? DEFAULT_MOONBASE_PARA_ID, 1);
 
-  const weight = await dispatcher.read.estimateDispatchWeight([remoteCall]);
+  const configuredDestination = await dispatcher.read.destination();
+  if (configuredDestination.toLowerCase() !== encodedDestination.toLowerCase()) {
+    throw new Error(
+      `Dispatcher destination mismatch. Expected ${encodedDestination}, got ${configuredDestination}. Re-deploy or call setDestination first.`
+    );
+  }
+
+  const weight = await dispatcher.read.estimateEncodedMessageWeight([encodedMessage]);
   console.log(`Estimated Hub XCM weight: refTime=${weight.refTime} proofSize=${weight.proofSize}`);
 
-  const hubTx = await dispatcher.write.dispatchRemoteCall([remoteCall]);
-  const hubReceipt = await hub.publicClient.waitForTransactionReceipt({ hash: hubTx });
+  const fromBlock = await moonbeam.publicClient.getBlockNumber();
+  const hubReceipt = await writeContract(
+    dispatcher.write.dispatchEncodedMessage,
+    [moonbeamDeployment.contracts.crossChainTarget, requestId, encodedMessage],
+    hub.publicClient,
+    hub.nonceManager
+  );
   console.log(`Hub dispatch tx: ${hubReceipt.transactionHash}`);
 
-  const manualRelay = (process.env.MOONBEAM_EXECUTION_MODE ?? "manual-relay") === "manual-relay";
-  if (!manualRelay) {
-    console.log("Skipping Moonbeam execution. Set MOONBEAM_EXECUTION_MODE=manual-relay to complete the smoke test.");
-    return;
-  }
-
-  const relayTx = await receiver.write.receiveCrossChainCall([
-    hubDeployment.contracts.crossChainDispatcher,
+  const remoteLog = await waitForRemoteExecutionLog(
+    moonbeam.publicClient,
     moonbeamDeployment.contracts.crossChainTarget,
-    0n,
-    remoteCall.callData,
-    requestId
-  ]);
-  const relayReceipt = await moonbeam.publicClient.waitForTransactionReceipt({ hash: relayTx });
-  console.log(`Moonbeam relay tx: ${relayReceipt.transactionHash}`);
+    requestId,
+    fromBlock
+  );
 
   const lastMemo = await target.read.lastMemo();
-  if (lastMemo !== memo) {
-    throw new Error(`Moonbeam target memo mismatch. Expected ${memo}, got ${lastMemo}`);
+  const lastRequestId = await target.read.lastRequestId();
+  const lastCaller = await target.read.lastCaller();
+  if (lastMemo !== memo || lastRequestId !== requestId) {
+    throw new Error(`Moonbeam target state mismatch. Expected request ${requestId} and memo ${memo}.`);
   }
 
-  const executed = await receiver.read.executedRequests([requestId]);
-  if (!executed) {
-    throw new Error("Receiver did not mark the request as executed.");
-  }
-
-  const [decodedMemo] = decodeAbiParameters(parseAbiParameters("bytes32"), remoteCall.callData.slice(10));
-  console.log(`Verified Hub -> Moonbeam smoke flow for request ${requestId} and memo ${decodedMemo}`);
+  console.log(`Moonbeam target tx: ${remoteLog.transactionHash}`);
+  console.log(`Moonbeam target caller: ${lastCaller}`);
+  console.log(`Verified real Hub -> Moonbeam XCM smoke flow for request ${requestId}`);
   console.log(`Dispatcher: ${getAddress(hubDeployment.contracts.crossChainDispatcher)}`);
-  console.log(`Receiver: ${getAddress(moonbeamDeployment.contracts.crossChainReceiver)}`);
+  console.log(`Target: ${getAddress(moonbeamDeployment.contracts.crossChainTarget)}`);
+
+  await hubApi.disconnect();
+  await moonbeamApi.disconnect();
 }
 
 main().catch((error) => {

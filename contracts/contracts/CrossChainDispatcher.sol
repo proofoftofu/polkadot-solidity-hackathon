@@ -8,6 +8,7 @@ contract CrossChainDispatcher {
     error UnsupportedDestination();
     error UnsupportedReceiver();
     error MessageVersionUnset();
+    error EmptyEncodedMessage();
 
     struct RemoteCall {
         uint256 destinationChainId;
@@ -36,6 +37,7 @@ contract CrossChainDispatcher {
         bytes32 requestId,
         bytes message
     );
+    event RawXcmDispatched(address indexed target, bytes32 indexed requestId, bytes destination, bytes message);
 
     constructor(address owner_, address xcmPrecompileAddress, uint256 destinationChainId_, bytes memory destination_) {
         owner = owner_;
@@ -70,6 +72,13 @@ contract CrossChainDispatcher {
         return xcm.weighMessage(_buildMessage(remoteCall));
     }
 
+    function estimateEncodedMessageWeight(bytes calldata message) external view returns (IXcm.Weight memory) {
+        if (message.length == 0) {
+            revert EmptyEncodedMessage();
+        }
+        return xcm.weighMessage(message);
+    }
+
     function dispatchRemoteCall(RemoteCall calldata remoteCall) external onlyOwner {
         if (remoteCall.destinationChainId != supportedDestinationChainId) {
             revert UnsupportedDestination();
@@ -82,6 +91,18 @@ contract CrossChainDispatcher {
         emit CrossChainDispatchQueued(
             remoteCall.destinationChainId, remoteCall.receiver, remoteCall.target, remoteCall.requestId, message
         );
+    }
+
+    function dispatchEncodedMessage(address target, bytes32 requestId, bytes calldata encodedMessage) external onlyOwner {
+        if (!allowedReceivers[target]) {
+            revert UnsupportedReceiver();
+        }
+        if (encodedMessage.length == 0) {
+            revert EmptyEncodedMessage();
+        }
+
+        xcm.send(destination, encodedMessage);
+        emit RawXcmDispatched(target, requestId, destination, encodedMessage);
     }
 
     function _buildMessage(RemoteCall calldata remoteCall) internal view returns (bytes memory) {
