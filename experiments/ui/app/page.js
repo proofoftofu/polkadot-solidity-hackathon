@@ -308,7 +308,7 @@ export default function HomePage() {
                   Wallet Portal
                 </div>
                 <h1 className="text-3xl font-semibold tracking-tight text-white">
-                  Sign in to your wallet
+                  Secure Agent Wallet Hub
                 </h1>
                 <p className="text-sm leading-6 text-slate-300">
                   Use the wallet normally, then manage AI session keys only when the backend
@@ -336,19 +336,23 @@ export default function HomePage() {
           <section className="space-y-6">
             <header className="grid gap-4 rounded-[32px] border border-white/10 bg-white/[0.05] p-6 backdrop-blur-xl xl:grid-cols-[1.2fr_0.8fr]">
               <div className="flex items-start gap-4">
-                <div className="flex h-16 w-16 items-center justify-center rounded-[24px] bg-gradient-to-br from-orange-300 via-amber-200 to-cyan-300 text-xl font-bold text-slate-950 shadow-lg shadow-orange-500/20">
-                  M
+                <div className="flex h-16 w-16 items-center justify-center rounded-[24px] border border-white/10 bg-white/[0.04] shadow-lg shadow-black/10">
+                  <div className="flex gap-2">
+                    <span className="h-2.5 w-2.5 rounded-full bg-orange-300" />
+                    <span className="h-2.5 w-2.5 rounded-full bg-amber-200" />
+                    <span className="h-2.5 w-2.5 rounded-full bg-cyan-300" />
+                  </div>
                 </div>
                 <div>
                   <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-orange-200/80">
                     Session Dashboard
                   </div>
                   <h2 className="mt-2 text-2xl font-semibold tracking-tight text-white">
-                    Wallet sessions for AI agent access
+                    Secure Agent Wallet Hub
                   </h2>
                   <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
-                    Momo monitors backend requests and surfaces each session key here. You can
-                    inspect every session, approve pending ones, and review how the backend used them.
+                    Manage wallet sessions for AI agent access. Inspect every session, approve
+                    pending ones, and review how the backend used them.
                   </p>
                 </div>
               </div>
@@ -369,6 +373,27 @@ export default function HomePage() {
               </div>
             </header>
 
+            {pendingSessions.length > 0 ? (
+              <section className="flex flex-col gap-4 rounded-[28px] border border-amber-400/20 bg-amber-400/10 p-5 backdrop-blur-xl md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-amber-200">
+                    Pending approval
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-amber-100">
+                    {pendingSessions[0].agent} is waiting for approval. You can review that session
+                    without leaving the current selected session.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={openApprovalForPendingSession}
+                  className="rounded-full border border-amber-300/20 bg-slate-950/30 px-4 py-2 text-sm font-semibold text-amber-100 hover:bg-slate-950/40"
+                >
+                  Review pending approval
+                </button>
+              </section>
+            ) : null}
+
             <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
               <aside className="space-y-6">
                 <section className="rounded-[28px] border border-white/10 bg-white/[0.05] p-5 backdrop-blur-xl">
@@ -378,9 +403,6 @@ export default function HomePage() {
                         Wallet
                       </div>
                       <div className="mt-2 text-lg font-semibold text-white">{appState.wallet.address}</div>
-                    </div>
-                    <div className="rounded-2xl bg-gradient-to-br from-orange-300 via-amber-200 to-cyan-300 px-4 py-3 text-sm font-semibold text-slate-950">
-                      {appState.companion.name}
                     </div>
                   </div>
                   <div className="mt-4 space-y-3">
@@ -398,20 +420,6 @@ export default function HomePage() {
                       </div>
                     ))}
                   </div>
-                </section>
-
-                <section className="rounded-[28px] border border-white/10 bg-white/[0.05] p-5 backdrop-blur-xl">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400">
-                        Session list
-                      </div>
-                      <div className="mt-2 text-lg font-semibold text-white">
-                        Incoming backend requests
-                      </div>
-                    </div>
-                  </div>
-
                   <button
                     type="button"
                     onClick={queueBackendSession}
@@ -424,12 +432,8 @@ export default function HomePage() {
                       ? "Maximum 3 live sessions"
                       : queuedTemplateIndex >= appState.sessionTemplates.length
                         ? "No more mock requests"
-                      : "Simulate backend request"}
+                        : "Simulate backend request"}
                   </button>
-                  <p className="mt-4 text-sm leading-6 text-slate-300">
-                    Keep the dashboard focused on one session. Open the switcher only when
-                    you want to browse or change the selected session.
-                  </p>
                 </section>
               </aside>
 
@@ -450,8 +454,7 @@ export default function HomePage() {
                           : "Revoked or expired sessions are removed from the dashboard list."}
                       </p>
                     </div>
-                    <div className="flex flex-wrap items-center gap-3">
-                      {selectedSession ? <StatusBadge status={selectedSession.status} /> : null}
+                    <div className="ml-auto flex flex-wrap items-center gap-3">
                       <button
                         type="button"
                         onClick={() => setShowSessionList(true)}
@@ -460,15 +463,7 @@ export default function HomePage() {
                       >
                         Show sessions
                       </button>
-                      {pendingSessions.length > 0 ? (
-                        <button
-                          type="button"
-                          onClick={openApprovalForPendingSession}
-                          className="rounded-full border border-amber-400/20 bg-amber-400/10 px-4 py-2 text-sm font-semibold text-amber-200 transition hover:bg-amber-400/15"
-                        >
-                          Review pending approval
-                        </button>
-                      ) : null}
+                      {selectedSession ? <StatusBadge status={selectedSession.status} /> : null}
                     </div>
                   </div>
 

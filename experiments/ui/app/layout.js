@@ -1,8 +1,8 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "Companion Wallet UI Experiment",
-  description: "Design prototype for a supportive AI wallet portal."
+  title: "Secure Agent Wallet Hub",
+  description: "Design prototype for managing secure wallet session keys for AI agents."
 };
 
 export default function RootLayout({ children }) {

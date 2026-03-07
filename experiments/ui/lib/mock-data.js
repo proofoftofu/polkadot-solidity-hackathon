@@ -1,7 +1,7 @@
 export const appState = {
-  companion: {
-    name: "Momo",
-    role: "A warm operator inside the wallet portal that tracks backend session-key work and only asks you for approval when the agent needs it."
+  product: {
+    name: "Secure Agent Wallet Hub",
+    role: "A wallet dashboard for managing secure session keys that AI agents can use only after approval."
   },
   wallet: {
     address: "0x4B7B...71A9",
