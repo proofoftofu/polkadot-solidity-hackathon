@@ -7,6 +7,7 @@ import {
   createWalletClient,
   encodeAbiParameters,
   getAddress,
+  getContract as viemGetContract,
   http,
   parseAbiParameters,
   publicActions,
@@ -88,10 +89,14 @@ export async function deployFromArtifact(walletClient, publicClient, artifact, a
   return getAddress(receipt.contractAddress);
 }
 
-export async function getContract(walletClient, artifact, address) {
-  return walletClient.getContract({
+export async function getContract(walletClient, publicClient, artifact, address) {
+  return viemGetContract({
     abi: artifact.abi,
-    address: getAddress(address)
+    address: getAddress(address),
+    client: {
+      public: publicClient,
+      wallet: walletClient
+    }
   });
 }
 

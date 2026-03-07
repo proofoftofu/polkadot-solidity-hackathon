@@ -6,7 +6,12 @@ async function main() {
   const { publicClient, walletClient } = createClients("polkadotTestnet");
 
   const dispatcherArtifact = await readArtifact("CrossChainDispatcher.sol", "CrossChainDispatcher");
-  const dispatcher = await getContract(walletClient, dispatcherArtifact, hubDeployment.contracts.crossChainDispatcher);
+  const dispatcher = await getContract(
+    walletClient,
+    publicClient,
+    dispatcherArtifact,
+    hubDeployment.contracts.crossChainDispatcher
+  );
   await publicClient.waitForTransactionReceipt({
     hash: await dispatcher.write.setAllowedReceiver([moonbeamDeployment.contracts.crossChainReceiver, true])
   });

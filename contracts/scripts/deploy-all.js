@@ -40,7 +40,7 @@ async function deployPolkadotHub() {
     moonbeamDestination
   ]);
 
-  const dispatcher = await getContract(walletClient, dispatcherArtifact, crossChainDispatcher);
+  const dispatcher = await getContract(walletClient, publicClient, dispatcherArtifact, crossChainDispatcher);
   await publicClient.waitForTransactionReceipt({
     hash: await dispatcher.write.setMessagePrefix([messagePrefix])
   });
@@ -100,7 +100,12 @@ async function deployMoonbeam(hubDeployment) {
 async function configureHubAllowlist(hubDeployment, moonbeamDeployment) {
   const { publicClient, walletClient } = createClients("polkadotTestnet");
   const dispatcherArtifact = await readArtifact("CrossChainDispatcher.sol", "CrossChainDispatcher");
-  const dispatcher = await getContract(walletClient, dispatcherArtifact, hubDeployment.contracts.crossChainDispatcher);
+  const dispatcher = await getContract(
+    walletClient,
+    publicClient,
+    dispatcherArtifact,
+    hubDeployment.contracts.crossChainDispatcher
+  );
 
   await publicClient.waitForTransactionReceipt({
     hash: await dispatcher.write.setAllowedReceiver([moonbeamDeployment.contracts.crossChainReceiver, true])

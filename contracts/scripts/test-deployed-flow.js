@@ -17,14 +17,21 @@ async function main() {
   const receiverArtifact = await readArtifact("CrossChainReceiver.sol", "CrossChainReceiver");
   const targetArtifact = await readArtifact("mocks/MockTarget.sol", "MockTarget");
 
-  const dispatcher = await getContract(hub.walletClient, dispatcherArtifact, hubDeployment.contracts.crossChainDispatcher);
+  const dispatcher = await getContract(
+    hub.walletClient,
+    hub.publicClient,
+    dispatcherArtifact,
+    hubDeployment.contracts.crossChainDispatcher
+  );
   const receiver = await getContract(
     moonbeam.walletClient,
+    moonbeam.publicClient,
     receiverArtifact,
     moonbeamDeployment.contracts.crossChainReceiver
   );
   const target = await getContract(
     moonbeam.walletClient,
+    moonbeam.publicClient,
     targetArtifact,
     moonbeamDeployment.contracts.crossChainTarget
   );
