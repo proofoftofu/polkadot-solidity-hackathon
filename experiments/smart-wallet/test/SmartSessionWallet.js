@@ -44,25 +44,40 @@ function sessionInitData(agent, tradeExecutor, expiresAt, sponsorshipRequired = 
   );
 }
 
-function buildUserOpHash(userOp) {
-  return keccak256(
-    encodeAbiParameters(
-      [
-        { type: "address" },
-        { type: "uint256" },
-        { type: "bytes32" },
-        { type: "bytes32" },
-        { type: "bytes32" }
-      ],
-      [
-        userOp.sender,
-        userOp.nonce,
-        keccak256(userOp.callData),
-        keccak256(userOp.paymasterAndData),
-        keccak256(userOp.initCode)
-      ]
-    )
+async function buildSignedUserOp({ entryPoint, wallet, validator, agent, executionCalldata, paymaster, nonce = 0n }) {
+  const callData = encodeFunctionData({
+    abi: wallet.abi,
+    functionName: "execute",
+    args: [BASE_MODE, executionCalldata]
+  });
+
+  const userOp = {
+    sender: wallet.address,
+    nonce,
+    initCode: "0x",
+    callData,
+    accountGasLimits: zeroHash,
+    preVerificationGas: 0n,
+    gasFees: zeroHash,
+    paymasterAndData:
+      paymaster === undefined
+        ? "0x"
+        : encodeAbiParameters([{ type: "address" }, { type: "uint256" }], [paymaster.address, 1_000_000_000_000_000n]),
+    signature: "0x"
+  };
+
+  const userOpHash = await entryPoint.read.getUserOpHash([userOp]);
+  const sessionSignature = await agent.signMessage({ message: { raw: userOpHash } });
+
+  userOp.signature = encodeAbiParameters(
+    [{ type: "address" }, { type: "bytes" }],
+    [
+      validator.address,
+      encodeAbiParameters([{ type: "address" }, { type: "bytes" }], [agent.account.address, sessionSignature])
+    ]
   );
+
+  return { userOp, userOpHash };
 }
 
 describe("SmartSessionWallet", async function () {
@@ -88,9 +103,11 @@ describe("SmartSessionWallet", async function () {
     const executor = await viem.deployContract("MockExecutorModule", [], {
       client: { wallet: deployer }
     });
-    const paymaster = await viem.deployContract("SimplePaymaster", [sponsor.account.address], {
-      client: { wallet: deployer }
-    });
+    const paymaster = await viem.deployContract(
+      "SimplePaymaster",
+      [sponsor.account.address, entryPoint.address],
+      { client: { wallet: deployer } }
+    );
 
     return { owner, sponsor, agent, tradeExecutor, entryPoint, wallet, validator, executor, paymaster };
   }
@@ -124,7 +141,7 @@ describe("SmartSessionWallet", async function () {
     assert.equal(await wallet.read.isModuleInstalled([2n, executor.address, "0x"]), true);
   });
 
-  it("executes a sponsored user operation through executeUserOp and paymaster", async function () {
+  it("executes a sponsored user operation through handleOps, validateUserOp, and paymaster validation", async function () {
     const { owner, sponsor, agent, tradeExecutor, entryPoint, wallet, validator, paymaster } =
       await deployFixture();
     const latestBlock = await publicClient.getBlock();
@@ -150,50 +167,24 @@ describe("SmartSessionWallet", async function () {
         args: [100n]
       })
     );
-    const accountCallData = encodeFunctionData({
-      abi: wallet.abi,
-      functionName: "execute",
-      args: [BASE_MODE, executionCalldata]
+    const { userOp, userOpHash } = await buildSignedUserOp({
+      entryPoint,
+      wallet,
+      validator,
+      agent,
+      executionCalldata,
+      paymaster
     });
-    const paymasterAndData = encodeAbiParameters(
-      [{ type: "address" }, { type: "uint256" }],
-      [paymaster.address, 1_000_000_000_000_000n]
-    );
-    const unsignedUserOp = {
-      sender: wallet.address,
-      nonce: 0n,
-      initCode: "0x",
-      callData: accountCallData,
-      accountGasLimits: zeroHash,
-      preVerificationGas: 0n,
-      gasFees: zeroHash,
-      paymasterAndData,
-      signature: "0x"
-    };
-    const userOpHash = buildUserOpHash(unsignedUserOp);
-    const sessionSignature = await agent.signMessage({ message: { raw: userOpHash } });
-    const signedUserOp = {
-      ...unsignedUserOp,
-      signature: encodeAbiParameters(
-        [{ type: "address" }, { type: "bytes" }],
-        [
-          validator.address,
-          encodeAbiParameters(
-            [{ type: "address" }, { type: "bytes" }],
-            [agent.account.address, sessionSignature]
-          )
-        ]
-      )
-    };
 
     await viem.assertions.emitWithArgs(
-      entryPoint.write.handleUserOp([wallet.address, signedUserOp, userOpHash]),
+      entryPoint.write.handleOps([[userOp]]),
       wallet,
       "UserOperationExecuted",
-      [userOpHash, getAddress(validator.address), getAddress(paymaster.address)]
+      [userOpHash, getAddress(validator.address)]
     );
 
     assert.equal(await tradeExecutor.read.totalAmountIn(), 100n);
+    assert.equal(await wallet.read.nonce(), 1n);
     assert.equal(await paymaster.read.sponsorBudget(), parseEther("0.499"));
   });
 
@@ -273,6 +264,62 @@ describe("SmartSessionWallet", async function () {
     assert.equal(await tradeExecutor.read.totalAmountIn(), 55n);
   });
 
+  it("rejects a replayed user operation nonce through the entry point flow", async function () {
+    const { owner, sponsor, agent, tradeExecutor, entryPoint, wallet, validator, paymaster } =
+      await deployFixture();
+    const latestBlock = await publicClient.getBlock();
+    const expiresAt = Number(latestBlock.timestamp + 3600n);
+
+    await wallet.write.installModule([1n, validator.address, sessionInitData(agent, tradeExecutor, expiresAt)], {
+      account: owner.account
+    });
+    await paymaster.write.setAccountAllowance([wallet.address, true], {
+      account: sponsor.account
+    });
+    await paymaster.write.deposit([], {
+      account: sponsor.account,
+      value: parseEther("0.5")
+    });
+
+    const executionCalldata = encodeSingleExecution(
+      tradeExecutor.address,
+      0n,
+      encodeFunctionData({
+        abi: tradeExecutor.abi,
+        functionName: "swapExactInput",
+        args: [100n]
+      })
+    );
+
+    const first = await buildSignedUserOp({
+      entryPoint,
+      wallet,
+      validator,
+      agent,
+      executionCalldata,
+      paymaster,
+      nonce: 0n
+    });
+
+    await entryPoint.write.handleOps([[first.userOp]]);
+
+    const replay = await buildSignedUserOp({
+      entryPoint,
+      wallet,
+      validator,
+      agent,
+      executionCalldata,
+      paymaster,
+      nonce: 0n
+    });
+
+    await viem.assertions.revertWithCustomError(
+      entryPoint.write.handleOps([[replay.userOp]]),
+      wallet,
+      "InvalidUserOpNonce"
+    );
+  });
+
   it("uninstalls the validator module and blocks future sponsored user operations", async function () {
     const { owner, sponsor, agent, tradeExecutor, entryPoint, wallet, validator, paymaster } =
       await deployFixture();
@@ -300,44 +347,17 @@ describe("SmartSessionWallet", async function () {
         args: [100n]
       })
     );
-    const accountCallData = encodeFunctionData({
-      abi: wallet.abi,
-      functionName: "execute",
-      args: [BASE_MODE, executionCalldata]
+    const { userOp } = await buildSignedUserOp({
+      entryPoint,
+      wallet,
+      validator,
+      agent,
+      executionCalldata,
+      paymaster
     });
-    const paymasterAndData = encodeAbiParameters(
-      [{ type: "address" }, { type: "uint256" }],
-      [paymaster.address, 1n]
-    );
-    const unsignedUserOp = {
-      sender: wallet.address,
-      nonce: 0n,
-      initCode: "0x",
-      callData: accountCallData,
-      accountGasLimits: zeroHash,
-      preVerificationGas: 0n,
-      gasFees: zeroHash,
-      paymasterAndData,
-      signature: "0x"
-    };
-    const userOpHash = buildUserOpHash(unsignedUserOp);
-    const sessionSignature = await agent.signMessage({ message: { raw: userOpHash } });
-    const signedUserOp = {
-      ...unsignedUserOp,
-      signature: encodeAbiParameters(
-        [{ type: "address" }, { type: "bytes" }],
-        [
-          validator.address,
-          encodeAbiParameters(
-            [{ type: "address" }, { type: "bytes" }],
-            [agent.account.address, sessionSignature]
-          )
-        ]
-      )
-    };
 
     await viem.assertions.revertWithCustomError(
-      entryPoint.write.handleUserOp([wallet.address, signedUserOp, userOpHash]),
+      entryPoint.write.handleOps([[userOp]]),
       wallet,
       "InvalidValidatorSelection"
     );

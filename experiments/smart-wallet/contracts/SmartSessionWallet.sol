@@ -64,10 +64,6 @@ interface IERC7579Validator is IERC7579Module {
         returns (bytes4);
 }
 
-interface ISimplePaymaster {
-    function consumeSponsorCharge(address account, uint256 sponsorCharge) external;
-}
-
 contract SmartSessionWallet is IERC1271, IERC7579Execution, IERC7579AccountConfig, IERC7579ModuleConfig {
     uint256 public constant MODULE_TYPE_VALIDATOR = 1;
     uint256 public constant MODULE_TYPE_EXECUTOR = 2;
@@ -83,17 +79,19 @@ contract SmartSessionWallet is IERC1271, IERC7579Execution, IERC7579AccountConfi
     error InvalidExecutionCalldata();
     error ExecutionFailed(bytes reason);
     error InvalidValidatorSelection();
-    error UserOpSenderMismatch();
+    error InvalidUserOpSender();
+    error InvalidUserOpNonce();
     error UserOpValidationFailed();
-    error InvalidPaymasterSelection();
 
     address public immutable owner;
     address public immutable entryPoint;
+    uint256 public nonce;
 
     mapping(uint256 moduleTypeId => mapping(address module => bool installed)) private _installedModules;
 
     event Executed(address indexed caller, address indexed target, bytes4 indexed selector, uint256 value);
-    event UserOperationExecuted(bytes32 indexed userOpHash, address indexed validator, address indexed paymaster);
+    event UserOperationValidated(bytes32 indexed userOpHash, address indexed validator, uint256 nonce);
+    event UserOperationExecuted(bytes32 indexed userOpHash, address indexed validator);
 
     constructor(address owner_, address entryPoint_) payable {
         owner = owner_;
@@ -190,9 +188,17 @@ contract SmartSessionWallet is IERC1271, IERC7579Execution, IERC7579AccountConfi
         returnData[0] = _executeSingle(executionCalldata);
     }
 
-    function executeUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash) external onlyEntryPoint {
+    function validateUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash, uint256)
+        external
+        onlyEntryPoint
+        returns (uint256 validationData)
+    {
         if (userOp.sender != address(this)) {
-            revert UserOpSenderMismatch();
+            revert InvalidUserOpSender();
+        }
+
+        if (userOp.nonce != nonce) {
+            revert InvalidUserOpNonce();
         }
 
         (address validator,) = abi.decode(userOp.signature, (address, bytes));
@@ -200,28 +206,24 @@ contract SmartSessionWallet is IERC1271, IERC7579Execution, IERC7579AccountConfi
             revert InvalidValidatorSelection();
         }
 
-        if (IERC7579Validator(validator).validateUserOp(userOp, userOpHash) != 0) {
+        validationData = IERC7579Validator(validator).validateUserOp(userOp, userOpHash);
+        if (validationData != 0) {
             revert UserOpValidationFailed();
         }
 
-        address paymaster = address(0);
-        if (userOp.paymasterAndData.length > 0) {
-            uint256 sponsorCharge;
-            (paymaster, sponsorCharge) = abi.decode(userOp.paymasterAndData, (address, uint256));
+        nonce += 1;
+        emit UserOperationValidated(userOpHash, validator, userOp.nonce);
+    }
 
-            if (paymaster.code.length == 0) {
-                revert InvalidPaymasterSelection();
-            }
-
-            ISimplePaymaster(paymaster).consumeSponsorCharge(address(this), sponsorCharge);
-        }
+    function executeUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash) external onlyEntryPoint {
+        (address validator,) = abi.decode(userOp.signature, (address, bytes));
 
         (bool success, bytes memory returnData) = address(this).call(userOp.callData);
         if (!success) {
             revert ExecutionFailed(returnData);
         }
 
-        emit UserOperationExecuted(userOpHash, validator, paymaster);
+        emit UserOperationExecuted(userOpHash, validator);
     }
 
     function isValidSignature(bytes32 hash, bytes calldata signature) external view returns (bytes4) {
