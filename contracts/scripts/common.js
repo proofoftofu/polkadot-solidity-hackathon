@@ -423,15 +423,15 @@ export function buildPeopleChainTeleportMessage(
   beneficiary,
   {
     amount = PAS_UNITS,
-    localFee = PAS_LOCAL_FEE,
-    remoteFee = PAS_REMOTE_FEE,
+    localFee = 1_000_000_000n,
+    remoteFee = 1_000_000_000n,
     xcmVersion = DEFAULT_XCM_VERSION
   } = {}
 ) {
   const asset = {
     id: {
-      parents: 0,
-      interior: "Here"
+      parents: 1,
+      interior: { Here: null }
     },
     fun: {
       Fungible: amount
@@ -439,8 +439,8 @@ export function buildPeopleChainTeleportMessage(
   };
   const feeAsset = {
     id: {
-      parents: 0,
-      interior: "Here"
+      parents: 1,
+      interior: { Here: null }
     },
     fun: {
       Fungible: remoteFee
@@ -455,8 +455,8 @@ export function buildPeopleChainTeleportMessage(
         PayFees: {
           asset: {
             id: {
-              parents: 0,
-              interior: "Here"
+              parents: 1,
+              interior: { Here: null }
             },
             fun: {
               Fungible: localFee
@@ -467,18 +467,18 @@ export function buildPeopleChainTeleportMessage(
       {
         InitiateTransfer: {
           destination: {
-            parents: 0,
+            parents: 1,
             interior: {
               X1: [{ Parachain: paraId }]
             }
           },
-          remoteFees: {
+          remote_fees: {
             Teleport: {
               Definite: [feeAsset]
             }
           },
-          preserveOrigin: false,
-          remoteXcm: [
+          preserve_origin: false,
+          remote_xcm: [
             {
               DepositAsset: {
                 assets: {

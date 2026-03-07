@@ -1,4 +1,5 @@
 import {
+  buildPeopleChainTeleportMessage,
   createClients,
   createSubstrateApi,
   getContract,
@@ -7,7 +8,7 @@ import {
   sendNative
 } from "./common.js";
 
-import { blake2AsU8a } from "@polkadot/util-crypto";
+import { blake2AsU8a, encodeAddress } from "@polkadot/util-crypto";
 import { hexToU8a, stringToU8a, u8aConcat, u8aToHex } from "@polkadot/util";
 
 function evmToSubstrateAccount(address) {
@@ -18,7 +19,7 @@ function evmToSubstrateAccount(address) {
 
 async function readFreeBalance(api, accountId32) {
   const account = await api.query.system.account(accountId32);
-  return account.data.free.toString();
+  return BigInt(account.data.free.toString());
 }
 
 async function ensureDispatcherEvmBalance(hub, dispatcherAddress, minBalance) {
@@ -31,7 +32,7 @@ async function ensureDispatcherEvmBalance(hub, dispatcherAddress, minBalance) {
   const receipt = await sendNative(
     hub.walletClient,
     hub.publicClient,
-    hub.nonceManager,
+    undefined,
     dispatcherAddress,
     topUp
   );
@@ -59,11 +60,28 @@ function summarizeDryRun(result) {
   return json;
 }
 
+async function waitForDestinationIncrease(api, beneficiary, beforeBalance) {
+  const attempts = Number.parseInt(process.env.XCM_DESTINATION_POLL_ATTEMPTS ?? "24", 10);
+  const delayMs = Number.parseInt(process.env.XCM_DESTINATION_POLL_DELAY_MS ?? "5000", 10);
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const current = await readFreeBalance(api, beneficiary);
+    console.log(`destinationPoll attempt=${attempt} balance=${current.toString()}`);
+    if (current > beforeBalance) {
+      return current;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  return readFreeBalance(api, beneficiary);
+}
+
 async function main() {
   const hubDeployment = await readDeployment("polkadotTestnet");
 
   const hub = createClients("polkadotTestnet");
   const hubApi = await createSubstrateApi("polkadotTestnet");
+  const peopleApi = await createSubstrateApi("peoplePaseo");
 
   const dispatcherArtifact = await readArtifact("CrossChainDispatcher.sol", "CrossChainDispatcher");
   const dispatcher = await getContract(
@@ -76,10 +94,23 @@ async function main() {
   const dispatcherAddress = hubDeployment.contracts.crossChainDispatcher;
   const dispatcherDerived = evmToSubstrateAccount(dispatcherAddress);
   const ownerDerived = evmToSubstrateAccount(hub.account.address);
-  const minimumDispatcherEvmBalance = 10n ** 18n;
+  const minimumDispatcherEvmBalance = BigInt(
+    process.env.XCM_MIN_DISPATCHER_EVM_BALANCE ?? "1000000000000000000"
+  );
+  const paraId = Number.parseInt(process.env.XCM_DESTINATION_PARA_ID ?? "1002", 10);
+  const beneficiary =
+    process.env.XCM_TEST_BENEFICIARY
+    ?? "0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48";
+  const transferAmount = BigInt(process.env.XCM_TRANSFER_AMOUNT ?? "10000000000");
+  const localFee = BigInt(process.env.XCM_LOCAL_FEE_AMOUNT ?? "1000000000");
+  const remoteFee = BigInt(process.env.XCM_REMOTE_FEE_AMOUNT ?? "1000000000");
   const encodedMessage =
     process.env.XCM_TEST_MESSAGE
-    ?? "0x050c00040100000700e40b54023001000002286bee31010100a90f0100000401000002286bee000400010204040d010204000101008eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48";
+    ?? buildPeopleChainTeleportMessage(hubApi, paraId, beneficiary, {
+      amount: transferAmount,
+      localFee,
+      remoteFee
+    });
 
   const dispatcherEvmBalance = await ensureDispatcherEvmBalance(
     hub,
@@ -92,10 +123,18 @@ async function main() {
   console.log("dispatcherDerivedAccountId32", dispatcherDerived);
   console.log("ownerEvmAddress", hub.account.address);
   console.log("ownerDerivedAccountId32", ownerDerived);
+  console.log("destinationParaId", paraId);
+  console.log("beneficiaryAccountId32", beneficiary);
+  console.log("beneficiarySs58", encodeAddress(beneficiary, 0));
+  console.log("transferAmount", transferAmount.toString());
+  console.log("localFee", localFee.toString());
+  console.log("remoteFee", remoteFee.toString());
   console.log("dispatcherEvmBalance", dispatcherEvmBalance.toString());
   console.log("ownerEvmBalance", ownerEvmBalance.toString());
-  console.log("dispatcherDerivedFreeBalance", await readFreeBalance(hubApi, dispatcherDerived));
-  console.log("ownerDerivedFreeBalance", await readFreeBalance(hubApi, ownerDerived));
+  console.log("dispatcherDerivedFreeBalance", (await readFreeBalance(hubApi, dispatcherDerived)).toString());
+  console.log("ownerDerivedFreeBalance", (await readFreeBalance(hubApi, ownerDerived)).toString());
+  const destinationBefore = await readFreeBalance(peopleApi, beneficiary);
+  console.log("destinationBeneficiaryBalanceBefore", destinationBefore.toString());
   console.log("encodedMessage", encodedMessage);
 
   const ownerAccountKey20Origin = {
@@ -155,13 +194,19 @@ async function main() {
 
   try {
     const hash = await dispatcher.write.executeEncodedMessage([requestId, encodedMessage, weight], {
-      account: hub.account,
-      nonce: await hub.nonceManager.next()
+      account: hub.account
     });
+    console.log(`Hub contract-origin execute tx: ${hash}`);
     const receipt = await hub.publicClient.waitForTransactionReceipt({ hash });
+    const destinationAfter = await waitForDestinationIncrease(peopleApi, beneficiary, destinationBefore);
 
-    console.log(`Hub contract-origin execute tx: ${receipt.transactionHash}`);
+    console.log(`Hub contract-origin execute receipt: ${receipt.transactionHash}`);
     console.log(`Dispatcher: ${dispatcherAddress}`);
+    console.log(`destinationBeneficiaryBalanceAfter ${destinationAfter.toString()}`);
+    console.log(`destinationBalanceDelta ${(destinationAfter - destinationBefore).toString()}`);
+    if (destinationAfter <= destinationBefore) {
+      throw new Error("Destination beneficiary balance did not increase within the polling window.");
+    }
     console.log(`Verified contract-origin XCM precompile smoke execution for request ${requestId}`);
   } catch (error) {
     console.error("contractExecuteError", error);
@@ -169,6 +214,7 @@ async function main() {
   }
 
   await hubApi.disconnect();
+  await peopleApi.disconnect();
 }
 
 main().catch((error) => {
