@@ -8,6 +8,9 @@ interface IWalletExecute {
 }
 
 contract SessionKeyValidatorModule is IERC7579Validator {
+    uint8 public constant OPERATION_KIND_CALL = 0;
+    uint8 public constant OPERATION_KIND_XCM_TELEPORT = 1;
+    bytes4 public constant EXECUTE_TELEPORT_SELECTOR = bytes4(keccak256("executeTeleport(bytes32,(uint32,bytes32,uint128,uint128,uint128))"));
     bytes4 public constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
     bytes4 public constant ERC1271_INVALID_VALUE = 0xffffffff;
 
@@ -20,6 +23,23 @@ contract SessionKeyValidatorModule is IERC7579Validator {
     error ValueBudgetExceeded();
     error WrongChain();
     error InvalidSignatureLength();
+    error UnsupportedOperationKind();
+
+    struct TeleportPolicy {
+        uint32 destinationParaId;
+        bytes32 beneficiaryAccountId32;
+        uint128 maxTeleportAmount;
+        uint128 maxLocalFee;
+        uint128 maxRemoteFee;
+    }
+
+    struct TeleportConfig {
+        uint32 destinationParaId;
+        bytes32 beneficiaryAccountId32;
+        uint128 amount;
+        uint128 localFee;
+        uint128 remoteFee;
+    }
 
     struct SessionConfig {
         address sessionKey;
@@ -32,40 +52,48 @@ contract SessionKeyValidatorModule is IERC7579Validator {
         uint32 remainingCalls;
         uint128 remainingValue;
         bool sponsorshipAllowed;
+        uint8 operationKind;
+        TeleportPolicy teleportPolicy;
         bool installed;
+    }
+
+    struct SessionInstallConfig {
+        address sessionKey;
+        bytes32 agentId;
+        uint256 targetChainId;
+        address allowedTarget;
+        bytes4 allowedSelector;
+        uint64 validUntil;
+        uint64 replayNonce;
+        uint32 remainingCalls;
+        uint128 remainingValue;
+        bool sponsorshipAllowed;
+        uint8 operationKind;
+        TeleportPolicy teleportPolicy;
     }
 
     mapping(address account => SessionConfig config) public sessions;
 
     function onInstall(bytes calldata data) external {
-        (
-            address sessionKey,
-            bytes32 agentId,
-            uint256 targetChainId,
-            address allowedTarget,
-            bytes4 allowedSelector,
-            uint64 validUntil,
-            uint64 replayNonce,
-            uint32 remainingCalls,
-            uint128 remainingValue,
-            bool sponsorshipAllowed
-        ) = abi.decode(data, (address, bytes32, uint256, address, bytes4, uint64, uint64, uint32, uint128, bool));
+        SessionInstallConfig memory config = abi.decode(data, (SessionInstallConfig));
 
         if (sessions[msg.sender].installed) {
             revert SessionAlreadyInstalled();
         }
 
         sessions[msg.sender] = SessionConfig({
-            sessionKey: sessionKey,
-            agentId: agentId,
-            targetChainId: targetChainId,
-            allowedTarget: allowedTarget,
-            allowedSelector: allowedSelector,
-            validUntil: validUntil,
-            replayNonce: replayNonce,
-            remainingCalls: remainingCalls,
-            remainingValue: remainingValue,
-            sponsorshipAllowed: sponsorshipAllowed,
+            sessionKey: config.sessionKey,
+            agentId: config.agentId,
+            targetChainId: config.targetChainId,
+            allowedTarget: config.allowedTarget,
+            allowedSelector: config.allowedSelector,
+            validUntil: config.validUntil,
+            replayNonce: config.replayNonce,
+            remainingCalls: config.remainingCalls,
+            remainingValue: config.remainingValue,
+            sponsorshipAllowed: config.sponsorshipAllowed,
+            operationKind: config.operationKind,
+            teleportPolicy: config.teleportPolicy,
             installed: true
         });
     }
@@ -96,11 +124,19 @@ contract SessionKeyValidatorModule is IERC7579Validator {
             return 1;
         }
 
-        (address target, uint256 value, bytes4 selector) = _decodeCallFromMemory(executionCalldata);
-        if (
-            config.targetChainId != block.chainid || target != config.allowedTarget || selector != config.allowedSelector
-                || config.remainingCalls == 0 || value > uint256(config.remainingValue)
-        ) {
+        if (config.targetChainId != block.chainid || config.remainingCalls == 0) {
+            return 1;
+        }
+
+        bool allowed;
+        if (config.operationKind == OPERATION_KIND_CALL) {
+            allowed = _validateDirectCallPolicy(config, executionCalldata);
+        } else if (config.operationKind == OPERATION_KIND_XCM_TELEPORT) {
+            allowed = _validateTeleportPolicy(config, executionCalldata);
+        } else {
+            return 1;
+        }
+        if (!allowed) {
             return 1;
         }
 
@@ -139,22 +175,117 @@ contract SessionKeyValidatorModule is IERC7579Validator {
             revert UnauthorizedAction();
         }
 
-        (address target, uint256 value, bytes4 selector) = _decodeCallFromCalldata(executionCalldata);
-        if (target != config.allowedTarget || selector != config.allowedSelector) {
-            revert UnauthorizedAction();
-        }
-        if (config.remainingCalls == 0) {
-            revert CallBudgetExceeded();
-        }
-        if (value > uint256(config.remainingValue)) {
-            revert ValueBudgetExceeded();
+        if (config.operationKind == OPERATION_KIND_CALL) {
+            uint256 value = _validateAndConsumeDirectCall(config, executionCalldata);
+            config.remainingCalls -= 1;
+            config.remainingValue -= uint128(value);
+        } else if (config.operationKind == OPERATION_KIND_XCM_TELEPORT) {
+            uint128 amount = _validateAndConsumeTeleport(config, executionCalldata);
+            config.remainingCalls -= 1;
+            config.remainingValue -= amount;
+        } else {
+            revert UnsupportedOperationKind();
         }
 
-        config.remainingCalls -= 1;
-        config.remainingValue -= uint128(value);
         config.replayNonce += 1;
 
         IWalletExecute(account).execute(mode, executionCalldata);
+    }
+
+    function _validateDirectCallPolicy(SessionConfig storage config, bytes memory executionCalldata)
+        private
+        view
+        returns (bool)
+    {
+        (address target, uint256 value, bytes4 selector) = _decodeCallFromMemory(executionCalldata);
+        return target == config.allowedTarget && selector == config.allowedSelector
+            && value <= uint256(config.remainingValue);
+    }
+
+    function _validateTeleportPolicy(SessionConfig storage config, bytes memory executionCalldata)
+        private
+        view
+        returns (bool)
+    {
+        (
+            address target,
+            uint256 value,
+            bytes4 selector,
+            uint32 destinationParaId,
+            bytes32 beneficiaryAccountId32,
+            uint128 amount,
+            uint128 localFee,
+            uint128 remoteFee
+        ) = _decodeTeleportFromMemory(executionCalldata);
+
+        if (target != config.allowedTarget || value != 0 || selector != EXECUTE_TELEPORT_SELECTOR) {
+            return false;
+        }
+        if (destinationParaId != config.teleportPolicy.destinationParaId) {
+            return false;
+        }
+        if (config.teleportPolicy.beneficiaryAccountId32 != bytes32(0)) {
+            if (beneficiaryAccountId32 != config.teleportPolicy.beneficiaryAccountId32) {
+                return false;
+            }
+        }
+        return amount <= config.teleportPolicy.maxTeleportAmount && amount <= config.remainingValue
+            && localFee <= config.teleportPolicy.maxLocalFee && remoteFee <= config.teleportPolicy.maxRemoteFee;
+    }
+
+    function _validateAndConsumeDirectCall(SessionConfig storage config, bytes calldata executionCalldata)
+        private
+        view
+        returns (uint256 value)
+    {
+        (address target, uint256 callValue, bytes4 selector) = _decodeCallFromCalldata(executionCalldata);
+        if (target != config.allowedTarget || selector != config.allowedSelector) {
+            revert UnauthorizedAction();
+        }
+        if (callValue > uint256(config.remainingValue)) {
+            revert ValueBudgetExceeded();
+        }
+        return callValue;
+    }
+
+    function _validateAndConsumeTeleport(SessionConfig storage config, bytes calldata executionCalldata)
+        private
+        view
+        returns (uint128 amount)
+    {
+        (
+            address target,
+            uint256 value,
+            bytes4 selector,
+            uint32 destinationParaId,
+            bytes32 beneficiaryAccountId32,
+            uint128 teleportAmount,
+            uint128 localFee,
+            uint128 remoteFee
+        ) = _decodeTeleportFromCalldata(executionCalldata);
+
+        if (target != config.allowedTarget || value != 0 || selector != EXECUTE_TELEPORT_SELECTOR) {
+            revert UnauthorizedAction();
+        }
+        if (destinationParaId != config.teleportPolicy.destinationParaId) {
+            revert UnauthorizedAction();
+        }
+        if (
+            config.teleportPolicy.beneficiaryAccountId32 != bytes32(0)
+                && beneficiaryAccountId32 != config.teleportPolicy.beneficiaryAccountId32
+        ) {
+            revert UnauthorizedAction();
+        }
+        if (teleportAmount > uint256(config.remainingValue)) {
+            revert ValueBudgetExceeded();
+        }
+        if (
+            teleportAmount > config.teleportPolicy.maxTeleportAmount || localFee > config.teleportPolicy.maxLocalFee
+                || remoteFee > config.teleportPolicy.maxRemoteFee
+        ) {
+            revert UnauthorizedAction();
+        }
+        return teleportAmount;
     }
 
     function isValidSignatureWithSender(address, bytes32 hash, bytes calldata signature)
@@ -218,6 +349,72 @@ contract SessionKeyValidatorModule is IERC7579Validator {
         target = address(bytes20(executionCalldata[:20]));
         value = uint256(bytes32(executionCalldata[20:52]));
         selector = bytes4(executionCalldata[52:56]);
+    }
+
+    function _decodeTeleportFromMemory(bytes memory executionCalldata)
+        private
+        pure
+        returns (
+            address target,
+            uint256 value,
+            bytes4 selector,
+            uint32 destinationParaId,
+            bytes32 beneficiaryAccountId32,
+            uint128 amount,
+            uint128 localFee,
+            uint128 remoteFee
+        )
+    {
+        (target, value, selector) = _decodeCallFromMemory(executionCalldata);
+        if (selector != EXECUTE_TELEPORT_SELECTOR) {
+            revert UnauthorizedAction();
+        }
+
+        bytes memory callData = new bytes(executionCalldata.length - 52);
+        for (uint256 i = 0; i < callData.length; i++) {
+            callData[i] = executionCalldata[i + 52];
+        }
+
+        bytes memory params = new bytes(callData.length - 4);
+        for (uint256 i = 0; i < params.length; i++) {
+            params[i] = callData[i + 4];
+        }
+
+        TeleportConfig memory config;
+        (, config) = abi.decode(params, (bytes32, TeleportConfig));
+        destinationParaId = config.destinationParaId;
+        beneficiaryAccountId32 = config.beneficiaryAccountId32;
+        amount = config.amount;
+        localFee = config.localFee;
+        remoteFee = config.remoteFee;
+    }
+
+    function _decodeTeleportFromCalldata(bytes calldata executionCalldata)
+        private
+        pure
+        returns (
+            address target,
+            uint256 value,
+            bytes4 selector,
+            uint32 destinationParaId,
+            bytes32 beneficiaryAccountId32,
+            uint128 amount,
+            uint128 localFee,
+            uint128 remoteFee
+        )
+    {
+        (target, value, selector) = _decodeCallFromCalldata(executionCalldata);
+        if (selector != EXECUTE_TELEPORT_SELECTOR) {
+            revert UnauthorizedAction();
+        }
+
+        TeleportConfig memory config;
+        (, config) = abi.decode(executionCalldata[56:], (bytes32, TeleportConfig));
+        destinationParaId = config.destinationParaId;
+        beneficiaryAccountId32 = config.beneficiaryAccountId32;
+        amount = config.amount;
+        localFee = config.localFee;
+        remoteFee = config.remoteFee;
     }
 
     function _recover(bytes32 digest, bytes memory signature) private pure returns (address) {

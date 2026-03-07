@@ -1,5 +1,4 @@
 import {
-  buildPeopleChainTeleportMessage,
   createClients,
   createSubstrateApi,
   getContract,
@@ -108,13 +107,14 @@ async function main() {
   );
   const localFee = BigInt(process.env.PEOPLE_PASEO_LOCAL_FEE_AMOUNT ?? "1000000000");
   const remoteFee = BigInt(process.env.PEOPLE_PASEO_REMOTE_FEE_AMOUNT ?? "1000000000");
-  const encodedMessage =
-    process.env.XCM_TEST_MESSAGE
-    ?? buildPeopleChainTeleportMessage(hubApi, paraId, beneficiary, {
-      amount: transferAmount,
-      localFee,
-      remoteFee
-    });
+  const teleportConfig = {
+    destinationParaId: paraId,
+    beneficiaryAccountId32: beneficiary,
+    amount: transferAmount,
+    localFee,
+    remoteFee
+  };
+  const encodedMessage = await dispatcher.read.buildTeleportMessage([teleportConfig]);
 
   const dispatcherEvmBalance = await ensureDispatcherEvmBalance(
     hub,
@@ -191,13 +191,13 @@ async function main() {
     )
   );
 
-  const weight = await dispatcher.read.estimateEncodedMessageWeight([encodedMessage]);
+  const weight = await dispatcher.read.estimateTeleportWeight([teleportConfig]);
   console.log("weight", weight);
 
   const requestId = `0x${Date.now().toString(16).padEnd(64, "0")}`;
 
   try {
-    const hash = await dispatcher.write.executeEncodedMessage([requestId, encodedMessage, weight], {
+    const hash = await dispatcher.write.executeTeleport([requestId, teleportConfig], {
       account: hub.account
     });
     console.log(`Hub contract-origin execute tx: ${hash}`);

@@ -17,37 +17,106 @@ import { deployFromArtifact, getContract, readArtifact } from "../scripts/common
 
 const BASE_MODE = zeroHash;
 const ERC1271_MAGIC_VALUE = "0x1626ba7e";
+const OPERATION_KIND_CALL = 0;
+const OPERATION_KIND_XCM_TELEPORT = 1;
+const TELEPORT_SELECTOR = "0x3dfb9f0d";
+const ROUTER_DESTINATION = encodeAbiParameters(
+  [{ type: "uint8" }, { type: "uint32" }, { type: "bytes20" }],
+  [1, 2004, "0x1111111111111111111111111111111111111111"]
+);
+const TELEPORT_CONFIG = {
+  destinationParaId: 1004,
+  beneficiaryAccountId32: "0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48",
+  amount: 10_000_000_000n,
+  localFee: 1_000_000_000n,
+  remoteFee: 1_000_000_000n
+};
 
 function encodeSingleExecution(target, value, callData) {
   return `${target.toLowerCase()}${padHex(toHex(value), { size: 32 }).slice(2)}${callData.slice(2)}`;
 }
 
-function sessionInitData(agent, allowedTarget, selector, expiresAt, chainId, sponsorshipAllowed = true) {
+function sessionInitData(
+  agent,
+  allowedTarget,
+  selector,
+  expiresAt,
+  chainId,
+  {
+    sponsorshipAllowed = true,
+    operationKind = OPERATION_KIND_CALL,
+    destinationParaId = 0,
+    beneficiaryAccountId32 = zeroHash,
+    maxTeleportAmount = 0n,
+    maxLocalFee = 0n,
+    maxRemoteFee = 0n,
+    remainingCalls = 2,
+    remainingValue = parseEther("1")
+  } = {}
+) {
   return encodeAbiParameters(
     [
-      { type: "address" },
-      { type: "bytes32" },
-      { type: "uint256" },
-      { type: "address" },
-      { type: "bytes4" },
-      { type: "uint64" },
-      { type: "uint64" },
-      { type: "uint32" },
-      { type: "uint128" },
-      { type: "bool" }
+      {
+        type: "tuple",
+        components: [
+          { type: "address" },
+          { type: "bytes32" },
+          { type: "uint256" },
+          { type: "address" },
+          { type: "bytes4" },
+          { type: "uint64" },
+          { type: "uint64" },
+          { type: "uint32" },
+          { type: "uint128" },
+          { type: "bool" },
+          { type: "uint8" },
+          {
+            type: "tuple",
+            components: [
+              { type: "uint32" },
+              { type: "bytes32" },
+              { type: "uint128" },
+              { type: "uint128" },
+              { type: "uint128" }
+            ]
+          }
+        ]
+      }
     ],
     [
-      agent.account.address,
-      stringToHex("agent.execute", { size: 32 }),
-      chainId,
-      allowedTarget.address,
-      selector,
-      BigInt(expiresAt),
-      0n,
-      2,
-      parseEther("1"),
-      sponsorshipAllowed
+      [
+        agent.account.address,
+        stringToHex("agent.execute", { size: 32 }),
+        chainId,
+        allowedTarget.address,
+        selector,
+        BigInt(expiresAt),
+        0n,
+        remainingCalls,
+        remainingValue,
+        sponsorshipAllowed,
+        operationKind,
+        [
+          destinationParaId,
+          beneficiaryAccountId32,
+          maxTeleportAmount,
+          maxLocalFee,
+          maxRemoteFee
+        ]
+      ]
     ]
+  );
+}
+
+function encodeTeleportExecution(dispatcher, requestId, teleportConfig) {
+  return encodeSingleExecution(
+    dispatcher.address,
+    0n,
+    encodeFunctionData({
+      abi: dispatcher.abi,
+      functionName: "executeTeleport",
+      args: [requestId, teleportConfig]
+    })
   );
 }
 
@@ -116,6 +185,9 @@ describe("AgentSmartWallet", async function () {
     const validatorArtifact = await readArtifact("SessionKeyValidatorModule.sol", "SessionKeyValidatorModule");
     const executorArtifact = await readArtifact("ExecutionModule.sol", "ExecutionModule");
     const paymasterArtifact = await readArtifact("SponsoredExecutionPaymaster.sol", "SponsoredExecutionPaymaster");
+    const routerArtifact = await readArtifact("mocks/MockMoonbeamXcmRouter.sol", "MockMoonbeamXcmRouter");
+    const xcmPrecompileArtifact = await readArtifact("mocks/MockXcmPrecompile.sol", "MockXcmPrecompile");
+    const dispatcherArtifact = await readArtifact("CrossChainDispatcher.sol", "CrossChainDispatcher");
 
     const targetAddress = await deployFromArtifact(deployer, publicClient, targetArtifact, []);
     const entryPointAddress = await deployFromArtifact(deployer, publicClient, entryPointArtifact, []);
@@ -134,6 +206,19 @@ describe("AgentSmartWallet", async function () {
     const wallet = await getContract(deployer, publicClient, walletArtifact, walletAddress);
     const validatorAddress = await deployFromArtifact(deployer, publicClient, validatorArtifact, []);
     const executorAddress = await deployFromArtifact(deployer, publicClient, executorArtifact, []);
+    const routerAddress = await deployFromArtifact(deployer, publicClient, routerArtifact, [ROUTER_DESTINATION]);
+    const xcmPrecompileAddress = await deployFromArtifact(
+      deployer,
+      publicClient,
+      xcmPrecompileArtifact,
+      [routerAddress]
+    );
+    const dispatcherAddress = await deployFromArtifact(
+      deployer,
+      publicClient,
+      dispatcherArtifact,
+      [walletAddress, xcmPrecompileAddress]
+    );
     const paymasterAddress = await deployFromArtifact(
       deployer,
       publicClient,
@@ -142,6 +227,8 @@ describe("AgentSmartWallet", async function () {
     );
     const validator = await getContract(deployer, publicClient, validatorArtifact, validatorAddress);
     const executor = await getContract(deployer, publicClient, executorArtifact, executorAddress);
+    const xcmPrecompile = await getContract(deployer, publicClient, xcmPrecompileArtifact, xcmPrecompileAddress);
+    const dispatcher = await getContract(deployer, publicClient, dispatcherArtifact, dispatcherAddress);
     const paymaster = await getContract(deployer, publicClient, paymasterArtifact, paymasterAddress);
 
     return {
@@ -155,6 +242,8 @@ describe("AgentSmartWallet", async function () {
       predictedWalletAddress,
       validator,
       executor,
+      xcmPrecompile,
+      dispatcher,
       paymaster
     };
   }
@@ -251,5 +340,79 @@ describe("AgentSmartWallet", async function () {
     );
 
     assert.equal(await wallet.read.isValidSignature([hash, encodedSignature]), ERC1271_MAGIC_VALUE);
+  });
+
+  it("allows a session-key XCM teleport only for the permitted destination policy", async function () {
+    const { owner, agent, wallet, validator, dispatcher, xcmPrecompile } = await deployFixture();
+    const latestBlock = await publicClient.getBlock();
+    const chainId = BigInt(await publicClient.getChainId());
+    const expiresAt = Number(latestBlock.timestamp + 3600n);
+    const requestId = stringToHex("req-xcm", { size: 32 });
+    const executionCalldata = encodeTeleportExecution(dispatcher, requestId, TELEPORT_CONFIG);
+
+    await wallet.write.installModule(
+      [
+        1n,
+        validator.address,
+        sessionInitData(agent, dispatcher, TELEPORT_SELECTOR, expiresAt, chainId, {
+          sponsorshipAllowed: false,
+          operationKind: OPERATION_KIND_XCM_TELEPORT,
+          destinationParaId: TELEPORT_CONFIG.destinationParaId,
+          beneficiaryAccountId32: TELEPORT_CONFIG.beneficiaryAccountId32,
+          maxTeleportAmount: TELEPORT_CONFIG.amount,
+          maxLocalFee: TELEPORT_CONFIG.localFee,
+          maxRemoteFee: TELEPORT_CONFIG.remoteFee,
+          remainingValue: TELEPORT_CONFIG.amount
+        })
+      ],
+      { account: owner.account }
+    );
+
+    await validator.write.executeSession([wallet.address, BASE_MODE, executionCalldata, chainId], {
+      account: agent.account
+    });
+
+    const executed = await xcmPrecompile.getEvents.XcmExecuted();
+    assert.equal(executed.length > 0, true);
+
+    const session = await validator.read.sessions([wallet.address]);
+    assert.equal(session[7], 1);
+    assert.equal(session[8], 0n);
+  });
+
+  it("rejects a session-key XCM teleport to an unauthorized parachain", async function () {
+    const { owner, agent, wallet, validator, dispatcher } = await deployFixture();
+    const latestBlock = await publicClient.getBlock();
+    const chainId = BigInt(await publicClient.getChainId());
+    const expiresAt = Number(latestBlock.timestamp + 3600n);
+    const requestId = stringToHex("req-xcm-bad", { size: 32 });
+    const executionCalldata = encodeTeleportExecution(dispatcher, requestId, {
+      ...TELEPORT_CONFIG,
+      destinationParaId: 2000
+    });
+
+    await wallet.write.installModule(
+      [
+        1n,
+        validator.address,
+        sessionInitData(agent, dispatcher, TELEPORT_SELECTOR, expiresAt, chainId, {
+          sponsorshipAllowed: false,
+          operationKind: OPERATION_KIND_XCM_TELEPORT,
+          destinationParaId: TELEPORT_CONFIG.destinationParaId,
+          beneficiaryAccountId32: TELEPORT_CONFIG.beneficiaryAccountId32,
+          maxTeleportAmount: TELEPORT_CONFIG.amount,
+          maxLocalFee: TELEPORT_CONFIG.localFee,
+          maxRemoteFee: TELEPORT_CONFIG.remoteFee,
+          remainingValue: TELEPORT_CONFIG.amount
+        })
+      ],
+      { account: owner.account }
+    );
+
+    await assert.rejects(
+      validator.write.executeSession([wallet.address, BASE_MODE, executionCalldata, chainId], {
+        account: agent.account
+      })
+    );
   });
 });
