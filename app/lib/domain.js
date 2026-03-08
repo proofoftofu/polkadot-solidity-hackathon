@@ -288,6 +288,13 @@ function toSerializable(state) {
   );
 }
 
+function sanitizeSession(session) {
+  return {
+    ...toSerializable(session),
+    sessionPrivateKey: undefined
+  };
+}
+
 export async function createAgentRequest(payload) {
   if (payload?.actionType !== "execute") {
     throw new Error("actionType must be execute");
@@ -331,6 +338,15 @@ export async function createAgentRequest(payload) {
 export async function listRequests() {
   const state = await readState();
   return state.requests;
+}
+
+export async function getRequestById(id) {
+  const state = await readState();
+  const request = state.requests.find((entry) => entry.id === id);
+  if (!request) {
+    throw new Error("Request not found");
+  }
+  return request;
 }
 
 export async function rejectRequest(id) {
@@ -386,6 +402,7 @@ export async function approveRequest(id, ownerAddress) {
     sessionPublicKey: sessionAccount.address,
     sessionPrivateKey,
     targetChain: request.targetChain,
+    validatorAddress: config.hubDeployment.contracts.sessionKeyValidatorModule,
     allowedTarget: config.hubDeployment.contracts.crossChainDispatcher,
     allowedSelector: EXECUTE_PROGRAM_SELECTOR,
     allowedEndpointKinds: [0],
@@ -410,27 +427,25 @@ export async function approveRequest(id, ownerAddress) {
   request.updatedAt = nowIso();
   state.sessions.unshift(session);
   await writeState(toSerializable(state));
-  return toSerializable(session);
+  return sanitizeSession(session);
 }
 
 export async function listSessions() {
   const state = await readState();
-  return state.sessions.map((session) => ({
-    ...session,
-    sessionPrivateKey: undefined
-  }));
+  return state.sessions.map((session) => sanitizeSession(session));
 }
 
 export async function getSessionById(id) {
+  return getSessionRecord(id);
+}
+
+export async function getSessionRecord(id, options = {}) {
   const state = await readState();
   const session = state.sessions.find((entry) => entry.id === id);
   if (!session) {
     throw new Error("Session not found");
   }
-  return {
-    ...session,
-    sessionPrivateKey: undefined
-  };
+  return options.includeSecret ? session : sanitizeSession(session);
 }
 
 export async function listExecutions() {
@@ -443,6 +458,11 @@ export async function getWalletStatus(ownerAddress) {
   const wallet = await ensureWallet(state, ownerAddress);
   await writeState(state);
   return wallet;
+}
+
+export async function getWalletRecord(ownerAddress) {
+  const state = await readState();
+  return ensureWallet(state, ownerAddress);
 }
 
 export async function deployWalletForOwner(ownerAddress) {
@@ -464,6 +484,49 @@ export async function deployWalletForOwner(ownerAddress) {
 
   await writeState(state);
   return wallet;
+}
+
+export async function markSessionSubmitted(sessionId, updates) {
+  const state = await readState();
+  const session = state.sessions.find((entry) => entry.id === sessionId);
+  if (!session) {
+    throw new Error("Session not found");
+  }
+
+  if (updates.bootstrapTxHash) {
+    session.bootstrapTxHash = updates.bootstrapTxHash;
+  }
+  if (updates.bootstrapUserOpHash) {
+    session.bootstrapUserOpHash = updates.bootstrapUserOpHash;
+  }
+  if (updates.lastUserOpTxHash) {
+    session.lastUserOpTxHash = updates.lastUserOpTxHash;
+  }
+  if (updates.lastUserOpHash) {
+    session.lastUserOpHash = updates.lastUserOpHash;
+  }
+  if (updates.activate) {
+    session.status = "active";
+  }
+
+  session.updatedAt = nowIso();
+  await writeState(state);
+  return session;
+}
+
+export async function markExecutionSubmitted(executionId, updates) {
+  const state = await readState();
+  const execution = state.executions.find((entry) => entry.id === executionId);
+  if (!execution) {
+    throw new Error("Execution not found");
+  }
+
+  execution.status = "submitted";
+  execution.hubTxHash = updates.hubTxHash ?? execution.hubTxHash;
+  execution.userOpHash = updates.userOpHash ?? execution.userOpHash;
+  execution.updatedAt = nowIso();
+  await writeState(state);
+  return execution;
 }
 
 export async function executeAgentRequest({ requestId, sessionId }) {
@@ -521,10 +584,7 @@ export async function getPortalSnapshot(ownerAddress) {
   return {
     wallet,
     requests: state.requests,
-    sessions: state.sessions.map((session) => ({
-      ...session,
-      sessionPrivateKey: undefined
-    })),
+    sessions: state.sessions.map((session) => sanitizeSession(session)),
     executions: state.executions
   };
 }

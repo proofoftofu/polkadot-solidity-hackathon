@@ -2,8 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const APP_ROOT = "/Users/taijusanagi/Documents/Developments/proofoftofu/automate-hackathon/hackathons/polkadot-solidity-hackathon/workspace/app";
+const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DATA_PATH = path.join(APP_ROOT, "data", "app-state.json");
 
 async function resetStateFile() {
@@ -56,6 +57,7 @@ test("approval creates a contract-aware session and deploy activates it", async 
   assert.equal(session.status, "approved");
   assert.equal(session.allowedSelector, "0x9d998c8f");
   assert.equal(typeof session.bootstrap.initCode, "string");
+  assert.equal(session.sessionPrivateKey, undefined);
 
   await deployWalletForOwner("0x1234567890123456789012345678901234567890");
   const activated = await getSessionById(session.id);
@@ -76,4 +78,24 @@ test("execution requires an active session", async () => {
   const session = await approveRequest(request.id, "0x1234567890123456789012345678901234567890");
 
   await assert.rejects(() => executeAgentRequest({ requestId: request.id, sessionId: session.id }), /not active/);
+});
+
+test("session lookup can include the secret key for bundler signing", async () => {
+  const { createAgentRequest, approveRequest, getSessionRecord } = await import("../lib/domain.js");
+  const request = await createAgentRequest({
+    actionType: "execute",
+    targetChain: "people-paseo",
+    summary: "Transfer PAS",
+    program: {
+      transferAmount: "10000000000",
+      beneficiary: "0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48"
+    }
+  });
+
+  const session = await approveRequest(request.id, "0x1234567890123456789012345678901234567890");
+  const secret = await getSessionRecord(session.id, { includeSecret: true });
+  const publicView = await getSessionRecord(session.id);
+
+  assert.equal(typeof secret.sessionPrivateKey, "string");
+  assert.equal(publicView.sessionPrivateKey, undefined);
 });

@@ -41,6 +41,55 @@ const CURRENT_DISPATCHER_ABI = [
   }
 ];
 
+const CURRENT_ENTRY_POINT_ABI = [
+  {
+    type: "function",
+    name: "handleOps",
+    stateMutability: "nonpayable",
+    inputs: [
+      {
+        name: "ops",
+        type: "tuple[]",
+        components: [
+          { name: "sender", type: "address" },
+          { name: "nonce", type: "uint256" },
+          { name: "initCode", type: "bytes" },
+          { name: "callData", type: "bytes" },
+          { name: "accountGasLimits", type: "bytes32" },
+          { name: "preVerificationGas", type: "uint256" },
+          { name: "gasFees", type: "bytes32" },
+          { name: "paymasterAndData", type: "bytes" },
+          { name: "signature", type: "bytes" }
+        ]
+      }
+    ],
+    outputs: []
+  },
+  {
+    type: "function",
+    name: "getUserOpHash",
+    stateMutability: "view",
+    inputs: [
+      {
+        name: "userOp",
+        type: "tuple",
+        components: [
+          { name: "sender", type: "address" },
+          { name: "nonce", type: "uint256" },
+          { name: "initCode", type: "bytes" },
+          { name: "callData", type: "bytes" },
+          { name: "accountGasLimits", type: "bytes32" },
+          { name: "preVerificationGas", type: "uint256" },
+          { name: "gasFees", type: "bytes32" },
+          { name: "paymasterAndData", type: "bytes" },
+          { name: "signature", type: "bytes" }
+        ]
+      }
+    ],
+    outputs: [{ name: "", type: "bytes32" }]
+  }
+];
+
 async function readJson(filePath) {
   const contents = await readFile(filePath, "utf8");
   return JSON.parse(contents);
@@ -75,7 +124,8 @@ export async function getContractsConfig() {
         walletFactory: walletFactoryArtifact.abi,
         wallet: walletArtifact.abi,
         sessionKeyValidatorModule: validatorArtifact.abi,
-        crossChainDispatcher: CURRENT_DISPATCHER_ABI
+        crossChainDispatcher: CURRENT_DISPATCHER_ABI,
+        entryPoint: CURRENT_ENTRY_POINT_ABI
       }
     };
   }
