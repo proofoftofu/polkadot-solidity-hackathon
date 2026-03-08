@@ -56,13 +56,13 @@ test("approval creates a contract-aware session and deploy activates it", async 
     }
   });
 
-  const session = await approveRequest(request.id, "0x1234567890123456789012345678901234567890");
+  const session = await approveRequest(request.id);
   assert.equal(session.status, "approved");
   assert.equal(session.allowedSelector, "0x9d998c8f");
   assert.equal(typeof session.bootstrap.initCode, "string");
   assert.equal(session.sessionPublicKey, "0x1234567890123456789012345678901234567890");
 
-  await deployWalletForOwner("0x1234567890123456789012345678901234567890");
+  await deployWalletForOwner(session.ownerAddress);
   const activated = await getSessionById(session.id);
   assert.equal(activated.status, "active");
 });
@@ -79,7 +79,7 @@ test("execution requires an active session", async () => {
       beneficiary: "0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48"
     }
   });
-  const session = await approveRequest(request.id, "0x1234567890123456789012345678901234567890");
+  const session = await approveRequest(request.id);
 
   await assert.rejects(() => executeAgentRequest({ requestId: request.id, sessionId: session.id }), /not active/);
 });
@@ -97,7 +97,7 @@ test("session lookup never exposes a private key", async () => {
     }
   });
 
-  const session = await approveRequest(request.id, "0x1234567890123456789012345678901234567890");
+  const session = await approveRequest(request.id);
   const publicView = await getSessionRecord(session.id);
   assert.equal(publicView.sessionPrivateKey, undefined);
 });

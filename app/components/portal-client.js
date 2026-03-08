@@ -31,6 +31,7 @@ export default function PortalClient({ initialState }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [ownerAddress, setOwnerAddress] = useState(initialState.wallet.ownerAddress);
   const [message, setMessage] = useState("");
+  const [actionLabel, setActionLabel] = useState("");
   const [isPending, startTransition] = useTransition();
 
   const refresh = async () => {
@@ -45,23 +46,28 @@ export default function PortalClient({ initialState }) {
     return () => clearInterval(timer);
   }, []);
 
-  const submit = (work) => {
+  const submit = (label, work) => {
     setMessage("");
+    setActionLabel(label);
     startTransition(async () => {
       try {
         await work();
         await refresh();
+        setMessage(`${label} completed.`);
       } catch (error) {
         setMessage(error.message);
+      } finally {
+        setActionLabel("");
       }
     });
   };
 
   const createRequest = () =>
-    submit(async () => {
+    submit("Creating request", async () => {
       const body = {
         actionType: "execute",
         targetChain: "people-paseo",
+        ownerAddress,
         summary: form.summary,
         value: "0",
         program: {
@@ -78,7 +84,7 @@ export default function PortalClient({ initialState }) {
     });
 
   const deployWallet = () =>
-    submit(async () => {
+    submit("Preparing wallet", async () => {
       await requestJson("/api/wallet/deploy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -86,22 +92,22 @@ export default function PortalClient({ initialState }) {
       });
     });
 
-  const approve = (id) =>
-    submit(async () => {
-      await requestJson(`/api/requests/${id}/approve`, {
+  const approve = (request) =>
+    submit(`Approving ${request.id}`, async () => {
+      await requestJson(`/api/requests/${request.id}/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ownerAddress })
+        body: JSON.stringify({ ownerAddress: request.userId })
       });
     });
 
   const reject = (id) =>
-    submit(async () => {
+    submit(`Rejecting ${id}`, async () => {
       await requestJson(`/api/requests/${id}/reject`, { method: "POST" });
     });
 
   const execute = (requestId, sessionId) =>
-    submit(async () => {
+    submit(`Executing ${requestId}`, async () => {
       await requestJson("/agent/executions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -177,7 +183,8 @@ export default function PortalClient({ initialState }) {
         </Section>
       </div>
 
-      {message ? <p className="mt-4 text-sm text-red-600">{message}</p> : null}
+      {isPending ? <p className="mt-4 text-sm text-slate-700">{actionLabel || "Working..."}</p> : null}
+      {message ? <p className={`mt-2 text-sm ${message.endsWith("completed.") ? "text-green-700" : "text-red-600"}`}>{message}</p> : null}
 
       <div className="mt-6 grid gap-4 lg:grid-cols-3">
         <Section title="Pending Requests">
@@ -186,16 +193,27 @@ export default function PortalClient({ initialState }) {
             <div key={request.id} className="rounded border border-slate-200 p-3 text-sm">
               <div className="font-medium">{request.summary}</div>
               <div>Status: {request.status}</div>
+              <div>Owner: {request.userId}</div>
               <div>Target: {request.targetChainLabel}</div>
               <div>Amount: {request.explanation.primaryAmount}</div>
               <div>Beneficiary: {request.explanation.beneficiary}</div>
               <div className="mt-2 flex gap-2">
                 {request.status === "pending" ? (
                   <>
-                    <button className="rounded border border-slate-300 px-2 py-1" onClick={() => approve(request.id)}>
-                      Approve
+                    <button
+                      className="rounded border border-slate-300 px-2 py-1"
+                      disabled={isPending}
+                      onClick={() => approve(request)}
+                      type="button"
+                    >
+                      {isPending ? "Working..." : "Approve"}
                     </button>
-                    <button className="rounded border border-slate-300 px-2 py-1" onClick={() => reject(request.id)}>
+                    <button
+                      className="rounded border border-slate-300 px-2 py-1"
+                      disabled={isPending}
+                      onClick={() => reject(request.id)}
+                      type="button"
+                    >
                       Reject
                     </button>
                   </>
@@ -248,10 +266,11 @@ export default function PortalClient({ initialState }) {
               </div>
               <button
                 className="rounded border border-slate-300 px-3 py-2"
-                disabled={isPending || request.status === "executed"}
-                onClick={() => execute(request.id, request.sessionId)}
-              >
-                Execute
+              disabled={isPending || request.status === "executed"}
+              onClick={() => execute(request.id, request.sessionId)}
+              type="button"
+            >
+                {isPending ? "Working..." : "Execute"}
               </button>
             </div>
           ))}

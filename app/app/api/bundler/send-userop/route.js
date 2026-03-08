@@ -5,6 +5,7 @@ import {
   buildBootstrapSigningRequest,
   buildSessionSigningRequest,
   buildSessionUserOp,
+  sendOwnerInstall,
   sendUserOperation
 } from "../../../../lib/bundler.js";
 
@@ -37,6 +38,11 @@ export async function POST(request) {
 
     let prepared;
     if (body.kind === "bootstrap") {
+      const bootstrap = await buildBootstrapSigningRequest(body.sessionId);
+      if (bootstrap.kind === "owner-install") {
+        const submission = await sendOwnerInstall(body.sessionId);
+        return NextResponse.json({ submission, prepared: bootstrap });
+      }
       prepared = await buildBootstrapUserOp(body.sessionId, body.ownerSignature ?? body.signature);
     } else if (body.kind === "session") {
       prepared = await buildSessionUserOp(

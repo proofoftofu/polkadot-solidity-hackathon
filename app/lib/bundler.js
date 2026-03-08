@@ -113,6 +113,28 @@ async function readSessionReplayNonce(config, clients, walletAddress) {
   return sessionState[0];
 }
 
+async function readSessionState(config, clients, walletAddress) {
+  return clients.publicClient.readContract({
+    address: config.hubDeployment.contracts.sessionKeyValidatorModule,
+    abi: config.abis.sessionKeyValidatorModule,
+    functionName: "getSessionState",
+    args: [walletAddress]
+  });
+}
+
+async function readWalletNonce(config, clients, walletAddress) {
+  return clients.publicClient.readContract({
+    address: walletAddress,
+    abi: config.abis.wallet,
+    functionName: "nonce"
+  });
+}
+
+async function readWalletDeployment(clients, walletAddress) {
+  const code = await clients.publicClient.getCode({ address: walletAddress });
+  return Boolean(code && code !== "0x");
+}
+
 async function sendPackedUserOperation(userOp) {
   const entryPoint = await getEntryPointContract();
   const hydrated = hydrateUserOp(userOp);
@@ -138,6 +160,33 @@ export async function buildBootstrapSigningRequest(sessionId) {
   const wallet = await getWalletRecord(session.ownerAddress);
   const entryPoint = await getEntryPointContract();
   const sender = session.walletAddress ?? wallet.predictedWalletAddress;
+  const deployed = await readWalletDeployment(entryPoint.clients, sender);
+
+  if (session.bootstrap?.mode === "owner-install" || deployed) {
+    const walletNonce = deployed ? await readWalletNonce(entryPoint.config, entryPoint.clients, sender) : 0n;
+    const sessionState = deployed ? await readSessionState(entryPoint.config, entryPoint.clients, sender) : [0n, 0, 0n, 0, false];
+    const rotateExisting = Boolean(session.bootstrap?.rotateExisting) || Boolean(sessionState[4]);
+    logBundler("Prepared owner install request", {
+      sessionId,
+      walletAddress: sender,
+      ownerAddress: session.ownerAddress,
+      walletNonce: walletNonce.toString(),
+      rotateExisting
+    });
+    return {
+      kind: "owner-install",
+      sessionId,
+      signerAddress: session.ownerAddress,
+      walletAddress: sender,
+      walletNonce: walletNonce.toString(),
+      rotateExisting,
+      uninstallCallData: session.bootstrap?.ownerUninstallCallData ?? "0x",
+      installCallData: session.bootstrap?.ownerInstallCallData ?? session.bootstrap?.callData,
+      sessionInstallData: session.bootstrap?.sessionInstallData,
+      validatorAddress: session.validatorAddress
+    };
+  }
+
   const userOp = makeBaseUserOp({
     sender,
     nonce: 0n,
@@ -167,6 +216,9 @@ export async function buildBootstrapSigningRequest(sessionId) {
 
 export async function buildBootstrapUserOp(sessionId, ownerSignatureInput) {
   const prepared = await buildBootstrapSigningRequest(sessionId);
+  if (prepared.kind !== "bootstrap") {
+    throw new Error("Bootstrap userOp is only available for first-time wallet setup");
+  }
   const ownerSignature = normalizeSignature(ownerSignatureInput, "ownerSignature");
   prepared.userOp.signature = encodeAbiParameters(
     [{ type: "address" }, { type: "bytes" }],
@@ -183,9 +235,10 @@ export async function buildSessionSigningRequest(sessionId) {
 
   const entryPoint = await getEntryPointContract();
   const replayNonce = await readSessionReplayNonce(entryPoint.config, entryPoint.clients, session.walletAddress);
+  const walletNonce = await readWalletNonce(entryPoint.config, entryPoint.clients, session.walletAddress);
   const userOp = makeBaseUserOp({
     sender: session.walletAddress,
-    nonce: 1n,
+    nonce: walletNonce,
     initCode: "0x",
     callData: session.executionDraft.walletExecuteCallData
   });
@@ -201,6 +254,7 @@ export async function buildSessionSigningRequest(sessionId) {
   logBundler("Prepared session signing request", {
     sessionId,
     walletAddress: session.walletAddress,
+    walletNonce: walletNonce.toString(),
     sessionSigner: session.sessionPublicKey,
     replayNonce: replayNonce.toString(),
     userOpHash,
@@ -215,6 +269,53 @@ export async function buildSessionSigningRequest(sessionId) {
     userOp: serializeUserOp(userOp),
     userOpHash,
     payloadHash
+  };
+}
+
+export async function sendOwnerInstall(sessionId) {
+  const session = await getSessionRecord(sessionId);
+  const entryPoint = await getEntryPointContract();
+  const ownerAddress = getAddress(session.ownerAddress);
+  if (getAddress(entryPoint.clients.account.address) !== ownerAddress) {
+    throw new Error("Configured PRIVATE_KEY does not match the session ownerAddress");
+  }
+
+  const sessionState = await readSessionState(entryPoint.config, entryPoint.clients, session.walletAddress);
+  const rotateExisting = Boolean(session.bootstrap?.rotateExisting) || Boolean(sessionState[4]);
+
+  const uninstallTxHash = rotateExisting
+    ? await entryPoint.clients.walletClient.writeContract({
+      account: entryPoint.clients.account,
+      address: session.walletAddress,
+      abi: entryPoint.config.abis.wallet,
+      functionName: "uninstallModule",
+      args: [1n, session.validatorAddress, "0x"]
+    })
+    : null;
+
+  if (uninstallTxHash) {
+    await entryPoint.clients.publicClient.waitForTransactionReceipt({ hash: uninstallTxHash });
+  }
+
+  const installTxHash = await entryPoint.clients.walletClient.writeContract({
+    account: entryPoint.clients.account,
+    address: session.walletAddress,
+    abi: entryPoint.config.abis.wallet,
+    functionName: "installModule",
+    args: [1n, session.validatorAddress, session.bootstrap.sessionInstallData]
+  });
+  const receipt = await entryPoint.clients.publicClient.waitForTransactionReceipt({ hash: installTxHash });
+
+  await markSessionSubmitted(sessionId, {
+    bootstrapTxHash: installTxHash,
+    activate: true
+  });
+
+  return {
+    kind: "owner-install",
+    txHash: installTxHash,
+    uninstallTxHash,
+    receipt: serializeValue(receipt)
   };
 }
 

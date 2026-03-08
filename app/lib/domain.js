@@ -25,7 +25,7 @@ import {
   ZERO_ADDRESS,
   ZERO_BYTES32
 } from "./constants.js";
-import { getContractsConfig, getWalletFactoryContract } from "./contracts.js";
+import { getContractsConfig, getReadClient, getWalletFactoryContract } from "./contracts.js";
 import { prepareWalletDispatcher } from "./dispatcher-runtime.js";
 import { getEnv } from "./server-env.js";
 import { makeId, readState, writeState } from "./state-store.js";
@@ -218,6 +218,22 @@ function buildBootstrapCallData(config, sessionInstallData) {
   });
 }
 
+function buildOwnerInstallCallData(config, sessionInstallData) {
+  return encodeFunctionData({
+    abi: config.abis.wallet,
+    functionName: "installModule",
+    args: [1n, config.hubDeployment.contracts.sessionKeyValidatorModule, sessionInstallData]
+  });
+}
+
+function buildOwnerUninstallCallData(config) {
+  return encodeFunctionData({
+    abi: config.abis.wallet,
+    functionName: "uninstallModule",
+    args: [1n, config.hubDeployment.contracts.sessionKeyValidatorModule, "0x"]
+  });
+}
+
 function buildInitCode(config, ownerAddress) {
   return `${config.hubDeployment.contracts.walletFactory.toLowerCase()}${encodeFunctionData({
     abi: config.abis.walletFactory,
@@ -267,18 +283,58 @@ async function predictWalletAddress(ownerAddress) {
   }
 }
 
+async function readLiveWalletState(config, walletAddress) {
+  if (!ENABLE_CHAIN_READS || !walletAddress) {
+    return null;
+  }
+
+  try {
+    const client = await getReadClient();
+    const code = await client.getCode({ address: walletAddress });
+    if (!code || code === "0x") {
+      return { deployed: false, nonce: 0n, validatorInstalled: false };
+    }
+
+    const [nonce, sessionState] = await Promise.all([
+      client.readContract({
+        address: walletAddress,
+        abi: config.abis.wallet,
+        functionName: "nonce"
+      }),
+      client.readContract({
+        address: config.hubDeployment.contracts.sessionKeyValidatorModule,
+        abi: config.abis.sessionKeyValidatorModule,
+        functionName: "getSessionState",
+        args: [walletAddress]
+      })
+    ]);
+
+    return {
+      deployed: true,
+      nonce,
+      validatorInstalled: Boolean(sessionState[4])
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function ensureWallet(state, ownerAddress) {
   const normalizedOwner = resolveOwnerAddress(ownerAddress);
   let wallet = state.wallets.find((entry) => entry.ownerAddress === normalizedOwner);
+  const config = await getContractsConfig();
 
   if (!wallet) {
     const predictedWalletAddress = await predictWalletAddress(normalizedOwner);
+    const liveState = await readLiveWalletState(config, predictedWalletAddress);
     wallet = {
       ownerAddress: normalizedOwner,
       predictedWalletAddress,
-      deployedWalletAddress: null,
+      deployedWalletAddress: liveState?.deployed ? predictedWalletAddress : null,
       dispatcherAddress: null,
-      status: predictedWalletAddress ? "predicted" : "unresolved",
+      status: liveState?.deployed ? "deployed" : (predictedWalletAddress ? "predicted" : "unresolved"),
+      liveNonce: liveState?.nonce?.toString?.() ?? "0",
+      validatorInstalled: liveState?.validatorInstalled ?? false,
       createdAt: nowIso(),
       updatedAt: nowIso()
     };
@@ -289,6 +345,24 @@ async function ensureWallet(state, ownerAddress) {
       wallet.status = wallet.deployedWalletAddress ? wallet.status : "predicted";
     }
     wallet.updatedAt = nowIso();
+  }
+
+  if (wallet.predictedWalletAddress) {
+    const liveState = await readLiveWalletState(config, wallet.predictedWalletAddress);
+    if (liveState?.deployed) {
+      wallet.deployedWalletAddress = wallet.predictedWalletAddress;
+      wallet.status = "deployed";
+      wallet.liveNonce = liveState.nonce.toString();
+      wallet.validatorInstalled = liveState.validatorInstalled;
+      wallet.updatedAt = nowIso();
+    } else if (liveState) {
+      wallet.liveNonce = "0";
+      wallet.validatorInstalled = false;
+      if (!wallet.deployedWalletAddress) {
+        wallet.status = wallet.predictedWalletAddress ? "predicted" : wallet.status;
+      }
+      wallet.updatedAt = nowIso();
+    }
   }
 
   return wallet;
@@ -405,8 +479,11 @@ export async function approveRequest(id, ownerAddress) {
   if (request.status !== "pending") {
     throw new Error(`Request is already ${request.status}`);
   }
+  if (ownerAddress && getAddress(ownerAddress) !== getAddress(request.userId)) {
+    throw new Error("Approval ownerAddress must match the request ownerAddress");
+  }
 
-  const wallet = await ensureWallet(state, ownerAddress ?? request.userId);
+  const wallet = await ensureWallet(state, request.userId);
   const config = await getContractsConfig();
   const dispatcher = await ensureDispatcher(state, wallet, config.hubDeployment.contracts.crossChainDispatcher);
   const expiresAt = new Date(Date.now() + DEFAULT_SESSION_DURATION_SECONDS * 1000).toISOString();
@@ -441,10 +518,16 @@ export async function approveRequest(id, ownerAddress) {
     allowedBeneficiaries: [beneficiary],
     assetLimits: [{ assetId: PAS_ASSET_ID, maxAmount: maxAmount.toString() }],
     expiresAt,
-    status: wallet.status === "deployed" ? "active" : "approved",
+    status: "approved",
     bootstrap: {
-      initCode: buildInitCode(config, wallet.ownerAddress),
-      callData: buildBootstrapCallData(config, sessionInstallData),
+      mode: wallet.status === "deployed" ? "owner-install" : "userop-bootstrap",
+      initCode: wallet.status === "deployed" ? "0x" : buildInitCode(config, wallet.ownerAddress),
+      callData: wallet.status === "deployed"
+        ? buildOwnerInstallCallData(config, sessionInstallData)
+        : buildBootstrapCallData(config, sessionInstallData),
+      ownerInstallCallData: buildOwnerInstallCallData(config, sessionInstallData),
+      ownerUninstallCallData: wallet.validatorInstalled ? buildOwnerUninstallCallData(config) : "0x",
+      rotateExisting: Boolean(wallet.validatorInstalled),
       sessionInstallData
     },
     executionDraft: buildExecutionDraft(config, request, walletAddress, dispatcher.dispatcherAddress),
@@ -503,7 +586,7 @@ export async function deployWalletForOwner(ownerAddress) {
   wallet.updatedAt = nowIso();
 
   for (const session of state.sessions) {
-    if (session.ownerAddress === wallet.ownerAddress && session.status === "approved") {
+    if (getAddress(session.ownerAddress) === getAddress(wallet.ownerAddress) && session.status === "approved") {
       session.status = "active";
       session.walletAddress = wallet.deployedWalletAddress ?? session.walletAddress;
       session.walletStatus = wallet.status;

@@ -24,6 +24,8 @@ The app exposes:
 
 Generate a session key locally and keep the private key secret. For a clean live test run, also generate a fresh owner key so the bootstrap userOp targets a brand-new wallet.
 
+The `ownerAddress` sent in `POST /agent/requests` is authoritative. The portal approval must approve that same owner address, and the app now enforces that.
+
 Example key generation:
 
 ```bash
@@ -51,10 +53,15 @@ curl -s http://127.0.0.1:3000/agent/requests \
 ```
 
 Capture `request.id`.
+Also capture `ownerAddress`. That is the address the user is approving for.
 
 ## Wait for approval
 
 Tell the user there is a pending request in the portal. Do not continue until the request is approved.
+
+Important:
+- the owner shown on the request card must match the generated `ownerAddress`
+- the portal should approve that request owner, not a different hardcoded wallet field
 
 Poll:
 
@@ -178,4 +185,5 @@ When the flow stalls, inspect the Next.js server logs. The app now logs request 
 - Never continue after rejection or timeout.
 - Never expose sensitive session material in the response.
 - Never post owner or session private keys to the app API.
+- The owner address to use is the request `ownerAddress` / `userId`, not an unrelated portal default wallet address.
 - Prefer `http://127.0.0.1:3000` unless the user says otherwise.

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const DEFAULT_STATE = {
   wallets: [],
@@ -9,7 +10,9 @@ const DEFAULT_STATE = {
   executions: []
 };
 
-const STATE_PATH = path.join(process.cwd(), "data", "app-state.json");
+const LIB_DIR = path.dirname(fileURLToPath(import.meta.url));
+const APP_ROOT = path.resolve(LIB_DIR, "..");
+const STATE_PATH = path.join(APP_ROOT, "data", "app-state.json");
 
 function cloneDefaultState() {
   return JSON.parse(JSON.stringify(DEFAULT_STATE));
