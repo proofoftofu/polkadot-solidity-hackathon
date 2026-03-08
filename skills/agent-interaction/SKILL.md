@@ -9,11 +9,32 @@ Use this skill when Codex needs to operate the local wallet app over `http://127
 
 Treat localhost as a machine-local dependency. If sandboxed network access blocks `curl` to `127.0.0.1`, rerun with approval.
 
-The scripts in this skill reuse the `viem` dependency already installed in `workspace/app`. No extra dependency is required inside `workspace/skills`.
+This skill must be self-contained. Do not assume helper scripts from the repo exist when the skill is installed elsewhere.
 
-Local persistent skill state lives in:
+## Preflight
 
-- `workspace/skills/agent-interaction/state/session-keys.json`
+Ethereum address derivation and EIP-191 signing are not practical to implement robustly with only Node built-ins. Standard Node provides secp256k1 primitives, but not the full keccak256 and recoverable-signature flow needed here.
+
+So the operational rule is:
+
+- check whether `viem` is available in the current workspace
+- if missing, install it in the current workspace before continuing
+
+Check:
+
+```bash
+node --input-type=module -e "import('viem/accounts').then(() => console.log('viem-ok')).catch(() => process.exit(1))"
+```
+
+If that fails:
+
+```bash
+npm install viem
+```
+
+Persistent local session state should live in a small JSON file in the current workspace, for example:
+
+- `.agent-session-keys.json`
 
 ## App contract
 
@@ -28,37 +49,43 @@ The app exposes:
 
 ## Reuse the current session first
 
-Before creating a new request, check whether a still-valid session key already exists for the owner.
+Before creating a new request, check whether a still-valid session key already exists for the owner in `.agent-session-keys.json`.
 
-Use:
+Use a small inline Node command to:
 
-```bash
-node workspace/skills/agent-interaction/scripts/ensure-session-key.mjs <owner-address>
-```
+- read `.agent-session-keys.json` if it exists
+- find an unexpired record for the owner
+- reuse it if present
+- otherwise generate a new session private key and derive its address with `viem`
+- store the record back into `.agent-session-keys.json`
 
-This script:
+Only reuse a session when the agent has the matching local session key in `.agent-session-keys.json`.
 
-- reuses an unexpired stored session key for that owner if one exists
-- otherwise generates a new session key and stores it locally
-- never sends the private key to the backend
+If there is an active session on-chain but no matching local session private key is available, do not reuse that on-chain session. Register a new session key and create a new approval request.
 
-If the returned record already has a live `sessionId` and its `expiresAt` is still in the future, prefer reusing that session instead of asking for approval again.
+If the returned local record already has a live `sessionId` and its `expiresAt` is still in the future, prefer reusing that session instead of asking for approval again.
 
-Reuse only when all of the following still match the intended action:
+Reuse only when all of the following are true:
 
+- the agent has the local `sessionPrivateKey`
 - same `ownerAddress`
 - same `targetChain`
 - same beneficiary
 - requested transfer amount is less than or equal to the stored limit
 - the session is not expired or revoked
 
-If any of those do not match, create a new request.
+If any of those do not match, create a new request with a new session public key.
 
 ## Create the request
 
-Generate a session key locally only when `ensure-session-key.mjs` did not return a reusable one. Keep the private key secret.
+Generate a session key locally only when there is no reusable saved record. Keep the private key secret.
 
 For existing owners, the backend now handles deployed-wallet reuse, validator rotation, and the live wallet nonce. Do not assume a fresh owner is required.
+
+But the session key rule is strict:
+
+- local session key present: reuse is allowed if policy still matches
+- local session key missing: create a new session request even if a session already exists on-chain
 
 The `ownerAddress` sent in `POST /agent/requests` is authoritative. The portal approval must approve that same owner address, and the app now enforces that.
 
@@ -93,10 +120,12 @@ Important:
 - the owner shown on the request card must match the generated `ownerAddress`
 - the portal should approve that request owner, not a different hardcoded wallet field
 
-Poll continuously:
+Poll continuously with inline Node or repeated `curl`.
+
+Preferred pattern:
 
 ```bash
-node workspace/skills/agent-interaction/scripts/wait-for-approval.mjs <request-id>
+node --input-type=module -e "const requestId=process.argv[1]; const baseUrl='http://127.0.0.1:3000'; for (;;) { try { const res = await fetch(`${baseUrl}/agent/requests/${requestId}`); const body = await res.json().catch(() => ({})); if (res.ok && body.request?.status === 'approved' && body.request?.sessionId) { console.log(JSON.stringify(body, null, 2)); process.exit(0); } if (res.ok && body.request?.status === 'rejected') { console.log(JSON.stringify(body, null, 2)); process.exit(2); } console.log(JSON.stringify({ requestId, status: body.request?.status ?? 'waiting', sessionId: body.request?.sessionId ?? null })); } catch (error) { console.log(JSON.stringify({ requestId, status: 'waiting', error: error.message })); } await new Promise((resolve) => setTimeout(resolve, 5000)); }" <request-id>
 ```
 
 Policy:
@@ -119,16 +148,7 @@ curl -s http://127.0.0.1:3000/agent/sessions/<session-id>
 
 Do not print secrets. Treat any private key or token-like field as sensitive.
 
-Persist the approved session metadata locally so the same session key can be reused later:
-
-```bash
-node workspace/skills/agent-interaction/scripts/update-session-record.mjs <session-public-key> \
-  --requestId <request-id> \
-  --sessionId <session-id> \
-  --targetChain people-paseo \
-  --expiresAt <expires-at> \
-  --status approved
-```
+Persist the approved session metadata back into `.agent-session-keys.json` so the same session key can be reused later.
 
 ## Bootstrap with owner signature only
 
@@ -157,7 +177,7 @@ If the backend returns `bootstrap`, sign `prepared.payloadHash` locally with the
 Example:
 
 ```bash
-node workspace/skills/agent-interaction/scripts/sign-payload.mjs <owner-private-key> <bootstrap-payload-hash>
+node --input-type=module -e "import { privateKeyToAccount } from 'viem/accounts'; const pk=process.argv[1].startsWith('0x') ? process.argv[1] : `0x${process.argv[1]}`; const payloadHash=process.argv[2]; const account=privateKeyToAccount(pk); const signature=await account.signMessage({ message: { raw: payloadHash } }); console.log(JSON.stringify({ address: account.address, payloadHash, signature }));" <owner-private-key> <bootstrap-payload-hash>
 ```
 
 Submit only the signature:
@@ -176,14 +196,7 @@ curl -s http://127.0.0.1:3000/agent/executions \
 
 The session should now move to `active`.
 
-After bootstrap or owner-install succeeds, update the local session record:
-
-```bash
-node workspace/skills/agent-interaction/scripts/update-session-record.mjs <session-public-key> \
-  --sessionId <session-id> \
-  --expiresAt <expires-at> \
-  --status active
-```
+After bootstrap or owner-install succeeds, update `.agent-session-keys.json` with `sessionId`, `expiresAt`, and `status: active`.
 
 ## Execute with session signature only
 
@@ -203,7 +216,7 @@ curl -s http://127.0.0.1:3000/agent/executions \
 This returns `prepared.payloadHash` and `prepared.replayNonce`. Sign that locally with the session key:
 
 ```bash
-node workspace/skills/agent-interaction/scripts/sign-payload.mjs <session-private-key> <session-payload-hash>
+node --input-type=module -e "import { privateKeyToAccount } from 'viem/accounts'; const pk=process.argv[1].startsWith('0x') ? process.argv[1] : `0x${process.argv[1]}`; const payloadHash=process.argv[2]; const account=privateKeyToAccount(pk); const signature=await account.signMessage({ message: { raw: payloadHash } }); console.log(JSON.stringify({ address: account.address, payloadHash, signature }));" <session-private-key> <session-payload-hash>
 ```
 
 Submit only the signature:
