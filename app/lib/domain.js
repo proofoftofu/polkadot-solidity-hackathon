@@ -1,4 +1,4 @@
-import crypto from "node:crypto";
+import { randomBytes as nodeRandomBytes } from "node:crypto";
 
 import {
   encodeAbiParameters,
@@ -26,6 +26,8 @@ import {
   ZERO_BYTES32
 } from "./constants.js";
 import { getContractsConfig, getWalletFactoryContract } from "./contracts.js";
+import { prepareWalletDispatcher } from "./dispatcher-runtime.js";
+import { getEnv } from "./server-env.js";
 import { makeId, readState, writeState } from "./state-store.js";
 
 const ENABLE_CHAIN_READS = process.env.APP_ENABLE_CHAIN_READS !== "false";
@@ -36,11 +38,20 @@ function nowIso() {
 }
 
 function resolveOwnerAddress(ownerAddress) {
-  const address = ownerAddress ?? DEFAULT_OWNER_ADDRESS;
+  const privateKey = getEnv("PRIVATE_KEY");
+  const derivedOwner = privateKey ? privateKeyToAccount(privateKey.startsWith("0x") ? privateKey : `0x${privateKey}`).address : null;
+  const address = ownerAddress ?? derivedOwner ?? DEFAULT_OWNER_ADDRESS;
   if (!isAddress(address)) {
     throw new Error("A valid ownerAddress is required");
   }
   return getAddress(address);
+}
+
+function normalizeSessionPublicKey(sessionPublicKey) {
+  if (!sessionPublicKey || !isAddress(sessionPublicKey)) {
+    throw new Error("sessionPublicKey is required and must be a valid address");
+  }
+  return getAddress(sessionPublicKey);
 }
 
 function getRoute(targetChain) {
@@ -215,7 +226,7 @@ function buildInitCode(config, ownerAddress) {
   }).slice(2)}`;
 }
 
-function buildExecutionDraft(config, request, walletAddress) {
+function buildExecutionDraft(config, request, walletAddress, dispatcherAddress) {
   const requestId = makeRequestId(request.id);
   const hydratedProgram = hydrateProgram(request.program);
   const dispatcherCall = encodeFunctionData({
@@ -225,7 +236,7 @@ function buildExecutionDraft(config, request, walletAddress) {
   });
 
   const executionCalldata = encodeSingleExecution(
-    config.hubDeployment.contracts.crossChainDispatcher,
+    dispatcherAddress,
     0n,
     dispatcherCall
   );
@@ -266,6 +277,7 @@ async function ensureWallet(state, ownerAddress) {
       ownerAddress: normalizedOwner,
       predictedWalletAddress,
       deployedWalletAddress: null,
+      dispatcherAddress: null,
       status: predictedWalletAddress ? "predicted" : "unresolved",
       createdAt: nowIso(),
       updatedAt: nowIso()
@@ -280,6 +292,25 @@ async function ensureWallet(state, ownerAddress) {
   }
 
   return wallet;
+}
+
+async function ensureDispatcher(state, wallet, fallbackDispatcherAddress) {
+  if (process.env.APP_DISABLE_DISPATCHER_RUNTIME === "true" || !getEnv("PRIVATE_KEY")) {
+    wallet.dispatcherAddress = wallet.dispatcherAddress ?? fallbackDispatcherAddress;
+    wallet.dispatcherPreparedAt = wallet.dispatcherPreparedAt ?? nowIso();
+    wallet.updatedAt = nowIso();
+    return { dispatcherAddress: wallet.dispatcherAddress };
+  }
+
+  if (!wallet.predictedWalletAddress) {
+    throw new Error("Wallet prediction is required before preparing the dispatcher");
+  }
+
+  const prepared = await prepareWalletDispatcher(wallet.predictedWalletAddress, wallet.dispatcherAddress);
+  wallet.dispatcherAddress = prepared.dispatcherAddress;
+  wallet.dispatcherPreparedAt = nowIso();
+  wallet.updatedAt = nowIso();
+  return prepared;
 }
 
 function toSerializable(state) {
@@ -315,6 +346,7 @@ export async function createAgentRequest(payload) {
     id: makeId("req"),
     agentId: APP_AGENT_ID,
     userId: resolveOwnerAddress(payload.ownerAddress),
+    sessionPublicKey: normalizeSessionPublicKey(payload.sessionPublicKey),
     actionType: "execute",
     status: "pending",
     sourceChain: route.sourceChain,
@@ -376,15 +408,14 @@ export async function approveRequest(id, ownerAddress) {
 
   const wallet = await ensureWallet(state, ownerAddress ?? request.userId);
   const config = await getContractsConfig();
-  const sessionPrivateKey = `0x${crypto.randomBytes(32).toString("hex")}`;
-  const sessionAccount = privateKeyToAccount(sessionPrivateKey);
+  const dispatcher = await ensureDispatcher(state, wallet, config.hubDeployment.contracts.crossChainDispatcher);
   const expiresAt = new Date(Date.now() + DEFAULT_SESSION_DURATION_SECONDS * 1000).toISOString();
   const maxAmount = BigInt(request.program.instructions[0].amount);
   const beneficiary = request.program.instructions[3].accountId32;
   const paraId = request.program.instructions[2].paraId;
   const sessionInstallData = buildSessionInstallData(
-    sessionAccount.address,
-    config.hubDeployment.contracts.crossChainDispatcher,
+    request.sessionPublicKey,
+    dispatcher.dispatcherAddress,
     beneficiary,
     maxAmount,
     paraId,
@@ -399,11 +430,10 @@ export async function approveRequest(id, ownerAddress) {
     walletAddress,
     walletStatus: wallet.status,
     agentId: APP_AGENT_ID,
-    sessionPublicKey: sessionAccount.address,
-    sessionPrivateKey,
+    sessionPublicKey: request.sessionPublicKey,
     targetChain: request.targetChain,
     validatorAddress: config.hubDeployment.contracts.sessionKeyValidatorModule,
-    allowedTarget: config.hubDeployment.contracts.crossChainDispatcher,
+    allowedTarget: dispatcher.dispatcherAddress,
     allowedSelector: EXECUTE_PROGRAM_SELECTOR,
     allowedEndpointKinds: [0],
     allowedInstructionKinds: [0, 2, 3, 4],
@@ -417,7 +447,7 @@ export async function approveRequest(id, ownerAddress) {
       callData: buildBootstrapCallData(config, sessionInstallData),
       sessionInstallData
     },
-    executionDraft: buildExecutionDraft(config, request, walletAddress),
+    executionDraft: buildExecutionDraft(config, request, walletAddress, dispatcher.dispatcherAddress),
     approvedAt: nowIso(),
     updatedAt: nowIso()
   };
@@ -445,7 +475,7 @@ export async function getSessionRecord(id, options = {}) {
   if (!session) {
     throw new Error("Session not found");
   }
-  return options.includeSecret ? session : sanitizeSession(session);
+  return sanitizeSession(session);
 }
 
 export async function listExecutions() {
@@ -530,6 +560,10 @@ export async function markExecutionSubmitted(executionId, updates) {
 }
 
 export async function executeAgentRequest({ requestId, sessionId }) {
+  return executeAgentRequestWithOptions({ requestId, sessionId });
+}
+
+export async function executeAgentRequestWithOptions({ requestId, sessionId, resultOverride, statusOverride }) {
   if (!requestId || !sessionId) {
     throw new Error("requestId and sessionId are required");
   }
@@ -558,10 +592,10 @@ export async function executeAgentRequest({ requestId, sessionId }) {
     routeType: request.routeType,
     sourceChain: request.sourceChain,
     destinationChain: request.targetChain,
-    status: ENABLE_CHAIN_SUBMISSION ? "submitted" : "simulated",
-    hubTxHash: ENABLE_CHAIN_SUBMISSION ? null : `0x${crypto.randomBytes(32).toString("hex")}`,
+    status: statusOverride ?? (ENABLE_CHAIN_SUBMISSION ? "submitted" : "simulated"),
+    hubTxHash: ENABLE_CHAIN_SUBMISSION ? null : `0x${nodeRandomBytes(32).toString("hex")}`,
     remoteTxHash: null,
-    result: {
+    result: resultOverride ?? {
       mode: ENABLE_CHAIN_SUBMISSION ? "live-disabled-in-codepath" : "simulation",
       requestId: session.executionDraft.requestId,
       executionCalldata: session.executionDraft.executionCalldata

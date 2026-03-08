@@ -117,6 +117,21 @@ export function createClients(networkName) {
   return { config, account, publicClient, walletClient, nonceManager };
 }
 
+async function getFeeOverrides(publicClient) {
+  const fees = await publicClient.estimateFeesPerGas();
+  const maxFeePerGas = fees.maxFeePerGas ?? fees.gasPrice;
+  const maxPriorityFeePerGas = fees.maxPriorityFeePerGas ?? fees.gasPrice;
+
+  if (maxFeePerGas === undefined || maxPriorityFeePerGas === undefined) {
+    return {};
+  }
+
+  return {
+    maxFeePerGas,
+    maxPriorityFeePerGas
+  };
+}
+
 export async function createSubstrateApi(networkName) {
   let lastError;
   const urls = NETWORKS[networkName].wsUrls;
@@ -227,30 +242,36 @@ export async function readArtifact(contractFile, contractName = contractFile.rep
 }
 
 export async function deployFromArtifact(walletClient, publicClient, artifact, args = [], nonceManager) {
+  const feeOverrides = await getFeeOverrides(publicClient);
   const hash = await walletClient.deployContract({
     abi: artifact.abi,
     bytecode: artifact.bytecode,
     args,
-    nonce: nonceManager ? await nonceManager.next() : undefined
+    nonce: nonceManager ? await nonceManager.next() : undefined,
+    ...feeOverrides
   });
   const receipt = await publicClient.waitForTransactionReceipt({ hash });
   return getAddress(receipt.contractAddress);
 }
 
 export async function writeContract(contractWrite, args, publicClient, nonceManager) {
+  const feeOverrides = await getFeeOverrides(publicClient);
   const hash = await contractWrite(args, {
-    nonce: nonceManager ? await nonceManager.next() : undefined
+    nonce: nonceManager ? await nonceManager.next() : undefined,
+    ...feeOverrides
   });
   return publicClient.waitForTransactionReceipt({ hash });
 }
 
 export async function sendNative(walletClient, publicClient, nonceManager, to, value) {
+  const feeOverrides = await getFeeOverrides(publicClient);
   const hash = await walletClient.sendTransaction({
     account: walletClient.account,
     chain: walletClient.chain,
     nonce: nonceManager ? await nonceManager.next() : undefined,
     to,
-    value
+    value,
+    ...feeOverrides
   });
   return publicClient.waitForTransactionReceipt({ hash });
 }

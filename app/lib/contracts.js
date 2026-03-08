@@ -10,6 +10,46 @@ const ABI_ROOT = path.join(DEPLOYMENTS_ROOT, "abi");
 
 let cache;
 
+const CURRENT_WALLET_FACTORY_ABI = [
+  {
+    type: "function",
+    name: "predictWallet",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "predicted", type: "address" }]
+  },
+  {
+    type: "function",
+    name: "createWallet",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "wallet", type: "address" }]
+  },
+  {
+    type: "function",
+    name: "wallets",
+    stateMutability: "view",
+    inputs: [{ name: "owner", type: "address" }],
+    outputs: [{ name: "", type: "address" }]
+  }
+];
+
+const CURRENT_SESSION_VALIDATOR_ABI = [
+  {
+    type: "function",
+    name: "getSessionState",
+    stateMutability: "view",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [
+      { name: "replayNonce", type: "uint64" },
+      { name: "remainingCalls", type: "uint32" },
+      { name: "remainingValue", type: "uint128" },
+      { name: "operationKind", type: "uint8" },
+      { name: "installed", type: "bool" }
+    ]
+  }
+];
+
 const CURRENT_DISPATCHER_ABI = [
   {
     type: "function",
@@ -121,9 +161,9 @@ export async function getContractsConfig() {
         }
       },
       abis: {
-        walletFactory: walletFactoryArtifact.abi,
+        walletFactory: CURRENT_WALLET_FACTORY_ABI,
         wallet: walletArtifact.abi,
-        sessionKeyValidatorModule: validatorArtifact.abi,
+        sessionKeyValidatorModule: CURRENT_SESSION_VALIDATOR_ABI,
         crossChainDispatcher: CURRENT_DISPATCHER_ABI,
         entryPoint: CURRENT_ENTRY_POINT_ABI
       }

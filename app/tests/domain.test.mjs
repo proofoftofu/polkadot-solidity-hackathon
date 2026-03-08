@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DATA_PATH = path.join(APP_ROOT, "data", "app-state.json");
+process.env.APP_DISABLE_DISPATCHER_RUNTIME = "true";
 
 async function resetStateFile() {
   await mkdir(path.dirname(DATA_PATH), { recursive: true });
@@ -28,6 +29,7 @@ test("creates an agent request with normalized explanation", async () => {
   const request = await createAgentRequest({
     actionType: "execute",
     targetChain: "people-paseo",
+    sessionPublicKey: "0x1234567890123456789012345678901234567890",
     summary: "Transfer PAS",
     program: {
       transferAmount: "10000000000",
@@ -46,6 +48,7 @@ test("approval creates a contract-aware session and deploy activates it", async 
   const request = await createAgentRequest({
     actionType: "execute",
     targetChain: "people-paseo",
+    sessionPublicKey: "0x1234567890123456789012345678901234567890",
     summary: "Transfer PAS",
     program: {
       transferAmount: "10000000000",
@@ -57,7 +60,7 @@ test("approval creates a contract-aware session and deploy activates it", async 
   assert.equal(session.status, "approved");
   assert.equal(session.allowedSelector, "0x9d998c8f");
   assert.equal(typeof session.bootstrap.initCode, "string");
-  assert.equal(session.sessionPrivateKey, undefined);
+  assert.equal(session.sessionPublicKey, "0x1234567890123456789012345678901234567890");
 
   await deployWalletForOwner("0x1234567890123456789012345678901234567890");
   const activated = await getSessionById(session.id);
@@ -69,6 +72,7 @@ test("execution requires an active session", async () => {
   const request = await createAgentRequest({
     actionType: "execute",
     targetChain: "people-paseo",
+    sessionPublicKey: "0x1234567890123456789012345678901234567890",
     summary: "Transfer PAS",
     program: {
       transferAmount: "10000000000",
@@ -80,11 +84,12 @@ test("execution requires an active session", async () => {
   await assert.rejects(() => executeAgentRequest({ requestId: request.id, sessionId: session.id }), /not active/);
 });
 
-test("session lookup can include the secret key for bundler signing", async () => {
+test("session lookup never exposes a private key", async () => {
   const { createAgentRequest, approveRequest, getSessionRecord } = await import("../lib/domain.js");
   const request = await createAgentRequest({
     actionType: "execute",
     targetChain: "people-paseo",
+    sessionPublicKey: "0x1234567890123456789012345678901234567890",
     summary: "Transfer PAS",
     program: {
       transferAmount: "10000000000",
@@ -93,9 +98,6 @@ test("session lookup can include the secret key for bundler signing", async () =
   });
 
   const session = await approveRequest(request.id, "0x1234567890123456789012345678901234567890");
-  const secret = await getSessionRecord(session.id, { includeSecret: true });
   const publicView = await getSessionRecord(session.id);
-
-  assert.equal(typeof secret.sessionPrivateKey, "string");
   assert.equal(publicView.sessionPrivateKey, undefined);
 });
