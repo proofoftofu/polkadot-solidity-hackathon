@@ -166,6 +166,172 @@
           </div>
         </div>
       </section>
+
+      <section class="pattern pattern-session" data-pattern="session">
+        <div class="pattern-copy">
+          <p class="pattern-label">Pattern 04</p>
+          <h2>Session Console</h2>
+          <p>
+            Approval is framed as a temporary wallet session, with the execution log
+            running beside the live agent.
+          </p>
+        </div>
+        <div class="session-layout">
+          <div class="session-agent-shell">
+            <div class="session-agent-core">
+              <div class="session-agent-avatar">
+                <span class="session-agent-glyph">S</span>
+                <strong>Session broker</strong>
+                <small data-stage>Assembling temporary execution rights</small>
+              </div>
+            </div>
+            <div class="session-timeline" data-log></div>
+          </div>
+          <aside class="session-approval">
+            <p class="mini-label">Session approval</p>
+            <div class="session-card" data-card>
+              <p class="request-type">Temporary session</p>
+              <h3 data-title>Approve rebalance session</h3>
+              <p data-meta>The agent requests a bounded session instead of repeated per-action confirmations.</p>
+              <div class="session-grid">
+                <div>
+                  <span>Wallet</span>
+                  <strong data-wallet>Treasury Vault</strong>
+                </div>
+                <div>
+                  <span>Scope</span>
+                  <strong data-action>Up to 3 stablecoin swaps</strong>
+                </div>
+                <div>
+                  <span>Expiry</span>
+                  <strong data-session-expiry>12 minutes</strong>
+                </div>
+                <div>
+                  <span>Policy</span>
+                  <strong data-session-policy>Daily limit enforced</strong>
+                </div>
+              </div>
+              <div class="button-row">
+                <button class="ghost-btn" data-reject>Reject session</button>
+                <button class="solid-btn" data-approve>Approve session</button>
+              </div>
+            </div>
+            <button class="link-btn" data-next>Next session request</button>
+          </aside>
+        </div>
+      </section>
+
+      <section class="pattern pattern-subagents" data-pattern="subagents">
+        <div class="pattern-copy">
+          <p class="pattern-label">Pattern 05</p>
+          <h2>Sub-Agent Mesh</h2>
+          <p>
+            The main agent stays central while specialist sub-agents execute narrow
+            checks and stream their logs into the session approval view.
+          </p>
+        </div>
+        <div class="mesh-layout">
+          <div class="mesh-stage">
+            <div class="mesh-main-agent">
+              <span class="mesh-core-icon">A</span>
+              <strong>Lead agent</strong>
+              <small data-stage>Coordinating sub-agent reviews</small>
+            </div>
+            <div class="mesh-subagent mesh-subagent-a" data-subagent-0>
+              <span>Risk</span>
+              <small>idle</small>
+            </div>
+            <div class="mesh-subagent mesh-subagent-b" data-subagent-1>
+              <span>Policy</span>
+              <small>idle</small>
+            </div>
+            <div class="mesh-subagent mesh-subagent-c" data-subagent-2>
+              <span>Execution</span>
+              <small>idle</small>
+            </div>
+          </div>
+          <aside class="mesh-panel">
+            <div class="mesh-session-card" data-card>
+              <p class="request-type">Delegated session</p>
+              <h3 data-title>Approve market-making session</h3>
+              <p data-meta>Multiple narrow agents have prepared a single bounded session for review.</p>
+              <div class="session-grid">
+                <div>
+                  <span>Session scope</span>
+                  <strong data-action>12 quote updates + 3 fills</strong>
+                </div>
+                <div>
+                  <span>Expires</span>
+                  <strong data-session-expiry>8 minutes</strong>
+                </div>
+              </div>
+              <div class="mesh-log">
+                <p class="mini-label">Execution log</p>
+                <ul data-log></ul>
+              </div>
+              <div class="button-row">
+                <button class="ghost-btn" data-reject>Block mesh</button>
+                <button class="solid-btn" data-approve>Approve mesh</button>
+              </div>
+            </div>
+            <button class="link-btn" data-next>Next mesh session</button>
+          </aside>
+        </div>
+      </section>
+
+      <section class="pattern pattern-ledger" data-pattern="ledger">
+        <div class="pattern-copy">
+          <p class="pattern-label">Pattern 06</p>
+          <h2>Ledger Theater</h2>
+          <p>
+            A premium dashboard where session approval sits above a readable ledger-style
+            execution history.
+          </p>
+        </div>
+        <div class="ledger-layout">
+          <div class="ledger-left">
+            <div class="ledger-agent">
+              <div class="ledger-agent-head"></div>
+              <strong>Execution steward</strong>
+              <small data-stage>Summarizing session intent for signature</small>
+            </div>
+            <div class="ledger-scroll">
+              <p class="mini-label">Execution log</p>
+              <div class="ledger-log" data-log></div>
+            </div>
+          </div>
+          <aside class="ledger-right">
+            <div class="ledger-session-card" data-card>
+              <p class="request-type">Session summary</p>
+              <h3 data-title>Approve payment ops session</h3>
+              <p data-meta>The agent will execute only vendor payments that match your schedule policy.</p>
+              <dl class="ledger-facts">
+                <div>
+                  <dt>Wallet</dt>
+                  <dd data-wallet>Operations Wallet</dd>
+                </div>
+                <div>
+                  <dt>Session scope</dt>
+                  <dd data-action>4 payroll disbursements</dd>
+                </div>
+                <div>
+                  <dt>Expiry</dt>
+                  <dd data-session-expiry>20 minutes</dd>
+                </div>
+                <div>
+                  <dt>Guardrail</dt>
+                  <dd data-session-policy>Known recipients only</dd>
+                </div>
+              </dl>
+              <div class="button-row">
+                <button class="ghost-btn" data-reject>Hold session</button>
+                <button class="solid-btn" data-approve>Approve summary</button>
+              </div>
+            </div>
+            <button class="link-btn" data-next>Next summary</button>
+          </aside>
+        </div>
+      </section>
     </main>
 
     <script src="./app.js"></script>
