@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Wallet Permission Patterns</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="page-shell">
+      <section class="hero">
+        <p class="eyebrow">UI Pattern Study</p>
+        <h1>Wallet approvals with a visible AI operator.</h1>
+        <p class="intro">
+          Three design directions where the AI agent stays centered, shows live work,
+          and hands permission requests to the user for a fast approve step.
+        </p>
+      </section>
+
+      <section class="pattern pattern-halo" data-pattern="halo">
+        <div class="pattern-copy">
+          <p class="pattern-label">Pattern 01</p>
+          <h2>Halo Orbit</h2>
+          <p>
+            A cinematic center-stage agent with orbiting actions and a high-clarity
+            approval rail.
+          </p>
+        </div>
+        <div class="pattern-stage">
+          <div class="agent-core">
+            <div class="agent-ring ring-a"></div>
+            <div class="agent-ring ring-b"></div>
+            <div class="agent-avatar">
+              <span class="agent-face"></span>
+              <strong>ARIA</strong>
+              <small>Scanning wallet intent</small>
+            </div>
+            <div class="orbit orbit-top">Bridge quote</div>
+            <div class="orbit orbit-right">Limit check</div>
+            <div class="orbit orbit-bottom">Risk score</div>
+            <div class="orbit orbit-left">Session scope</div>
+          </div>
+
+          <aside class="request-panel">
+            <div class="live-row">
+              <span class="live-dot"></span>
+              <span class="status-text">Agent is preparing a permission request</span>
+            </div>
+            <div class="request-card" data-card>
+              <p class="request-type">Permission request</p>
+              <h3 data-title>Approve USDC transfer route</h3>
+              <p class="request-meta" data-meta>Agent wants temporary spend approval for 15 minutes.</p>
+              <dl class="request-facts">
+                <div>
+                  <dt>Wallet</dt>
+                  <dd data-wallet>Main Treasury</dd>
+                </div>
+                <div>
+                  <dt>Action</dt>
+                  <dd data-action>Spend up to 120 USDC on Base</dd>
+                </div>
+              </dl>
+              <div class="button-row">
+                <button class="ghost-btn" data-reject>Reject</button>
+                <button class="solid-btn" data-approve>Approve</button>
+              </div>
+            </div>
+            <button class="link-btn" data-next>Load next request</button>
+          </aside>
+        </div>
+      </section>
+
+      <section class="pattern pattern-signal" data-pattern="signal">
+        <div class="pattern-copy">
+          <p class="pattern-label">Pattern 02</p>
+          <h2>Signal Chamber</h2>
+          <p>
+            A control-room layout where the agent broadcasts activity and queued approvals
+            rise into focus.
+          </p>
+        </div>
+        <div class="signal-layout">
+          <aside class="signal-feed">
+            <p class="mini-label">Live trace</p>
+            <ul data-log>
+              <li>Policy engine synced</li>
+              <li>Intent parser matched merchant</li>
+              <li>Waiting for user approval</li>
+            </ul>
+          </aside>
+
+          <div class="signal-core">
+            <div class="signal-agent">
+              <div class="signal-grid"></div>
+              <div class="signal-avatar">
+                <span>AI</span>
+                <strong>Operator online</strong>
+                <small data-stage>Composing approval packet</small>
+              </div>
+            </div>
+          </div>
+
+          <aside class="signal-queue">
+            <p class="mini-label">Approval queue</p>
+            <div class="queue-pill">
+              <span data-count>2</span>
+              <small>pending asks</small>
+            </div>
+            <div class="queue-card" data-card>
+              <h3 data-title>Grant swap allowance</h3>
+              <p data-meta>Permit the agent to sign one swap transaction under your policy.</p>
+              <div class="queue-amount" data-action>0.35 ETH max slippage protected</div>
+              <div class="button-row">
+                <button class="ghost-btn" data-reject>Deny</button>
+                <button class="solid-btn" data-approve>Authorize</button>
+              </div>
+            </div>
+            <button class="link-btn" data-next>Cycle request</button>
+          </aside>
+        </div>
+      </section>
+
+      <section class="pattern pattern-paper" data-pattern="paper">
+        <div class="pattern-copy">
+          <p class="pattern-label">Pattern 03</p>
+          <h2>Approval Deck</h2>
+          <p>
+            A warmer product direction with a trusted agent figure, stacked requests,
+            and a soft wallet-dashboard feel.
+          </p>
+        </div>
+        <div class="paper-layout">
+          <div class="paper-center">
+            <div class="paper-agent">
+              <div class="paper-halo"></div>
+              <div class="paper-head">
+                <span></span>
+              </div>
+              <h3>NOVA</h3>
+              <p data-stage>Reviewing subscriptions and recurring spends</p>
+            </div>
+          </div>
+          <div class="paper-stack">
+            <article class="paper-card paper-card-back"></article>
+            <article class="paper-card paper-card-mid"></article>
+            <article class="paper-card paper-card-front" data-card>
+              <p class="request-type">Approval needed</p>
+              <h3 data-title>Allow recurring cloud bill</h3>
+              <p data-meta>The agent found a known monthly vendor and is asking for bounded autopay.</p>
+              <div class="paper-grid">
+                <div>
+                  <span>Amount cap</span>
+                  <strong data-action>$240 / month</strong>
+                </div>
+                <div>
+                  <span>Expires</span>
+                  <strong data-wallet>After 90 days</strong>
+                </div>
+              </div>
+              <div class="button-row">
+                <button class="ghost-btn" data-reject>Not now</button>
+                <button class="solid-btn" data-approve>Approve cap</button>
+              </div>
+            </article>
+            <button class="link-btn" data-next>Next card</button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
