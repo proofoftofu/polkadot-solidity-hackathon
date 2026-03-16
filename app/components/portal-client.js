@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
 const EMPTY_FORM = {
   summary: "Send PAS from Polkadot Hub Testnet to People Chain Paseo",
   amount: "10000000000",
   beneficiary: "0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48"
 };
+
+const DEMO_SESSION_STORAGE_KEY = "nova-demo-session-keys";
 
 const CHIP_POSITIONS = [
   "left-4 top-6 md:left-10 md:top-10",
@@ -75,11 +78,59 @@ function buildConsoleLines(state, actionLabel, message) {
   if (lines.length === 0) {
     lines.push({
       tone: "muted",
-      text: "[SYSTEM] No requests or sessions yet. Open the control window to create the first delegate request."
+      text: "[SYSTEM] No requests or sessions yet. Start the demo agent to create the first delegate request."
     });
   }
 
   return lines.slice(0, 10);
+}
+
+function readDemoSessionStore() {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const raw = window.localStorage.getItem(DEMO_SESSION_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeDemoSessionStore(store) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(DEMO_SESSION_STORAGE_KEY, JSON.stringify(store));
+}
+
+function getReusableDemoSession(ownerAddress) {
+  if (!ownerAddress) {
+    return null;
+  }
+  const store = readDemoSessionStore();
+  const saved = store[ownerAddress.toLowerCase()];
+  if (!saved?.sessionPrivateKey || !saved?.sessionPublicKey || !saved?.expiresAt) {
+    return null;
+  }
+  if (new Date(saved.expiresAt).getTime() <= Date.now()) {
+    return null;
+  }
+  return saved;
+}
+
+function upsertDemoSession(ownerAddress, updates) {
+  if (!ownerAddress) {
+    return null;
+  }
+  const store = readDemoSessionStore();
+  const key = ownerAddress.toLowerCase();
+  store[key] = {
+    ...(store[key] ?? {}),
+    ...updates
+  };
+  writeDemoSessionStore(store);
+  return store[key];
 }
 
 function pillTone(status) {
@@ -113,14 +164,26 @@ function lineTone(tone) {
 
 export default function PortalClient({ initialState }) {
   const [state, setState] = useState(initialState);
-  const [form, setForm] = useState(EMPTY_FORM);
   const [ownerAddress, setOwnerAddress] = useState(initialState.wallet.ownerAddress);
   const [message, setMessage] = useState("");
   const [actionLabel, setActionLabel] = useState("");
-  const [controlWindowOpen, setControlWindowOpen] = useState(true);
+  const [controlWindowOpen, setControlWindowOpen] = useState(false);
   const [sessionModalId, setSessionModalId] = useState(null);
   const [activeRequestIndex, setActiveRequestIndex] = useState(0);
+  const [demoLogs, setDemoLogs] = useState([]);
+  const [demoContext, setDemoContext] = useState(null);
   const [isPending, startTransition] = useTransition();
+
+  const appendDemoLog = (tone, text) => {
+    setDemoLogs((current) => [
+      {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+        tone,
+        text
+      },
+      ...current
+    ].slice(0, 14));
+  };
 
   const refresh = async () => {
     const snapshot = await requestJson("/api/state");
@@ -133,6 +196,57 @@ export default function PortalClient({ initialState }) {
     }, 5000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (!demoContext?.requestId || demoContext.status !== "waiting-approval") {
+      return undefined;
+    }
+
+    let stopped = false;
+    const poll = async () => {
+      try {
+        const payload = await requestJson(`/agent/requests/${demoContext.requestId}`);
+        if (stopped) {
+          return;
+        }
+        const request = payload.request;
+        if (request.status === "approved" && request.sessionId) {
+          const sessionPayload = await requestJson(`/agent/sessions/${request.sessionId}`);
+          appendDemoLog("success", `[DEMO] Approval confirmed for ${request.id}. Session ${request.sessionId} is now active.`);
+          upsertDemoSession(request.userId, {
+            ownerAddress: request.userId,
+            requestId: request.id,
+            sessionId: request.sessionId,
+            expiresAt: sessionPayload.session.expiresAt,
+            status: "approved"
+          });
+          setDemoContext((current) => current ? { ...current, sessionId: request.sessionId, status: "approved" } : current);
+          await refresh();
+          return;
+        }
+        if (request.status === "rejected") {
+          appendDemoLog("error", `[DEMO] Request ${request.id} was rejected.`);
+          setDemoContext((current) => current ? { ...current, status: "rejected" } : current);
+          await refresh();
+        }
+      } catch (error) {
+        if (!stopped) {
+          appendDemoLog("error", `[DEMO] Approval polling failed: ${error.message}`);
+        }
+      }
+    };
+
+    const timer = setInterval(() => {
+      poll().catch(() => {});
+    }, 3000);
+
+    poll().catch(() => {});
+
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [demoContext?.requestId, demoContext?.status]);
 
   const submit = (label, work) => {
     setMessage("");
@@ -149,26 +263,6 @@ export default function PortalClient({ initialState }) {
       }
     });
   };
-
-  const createRequest = () =>
-    submit("Creating request", async () => {
-      await requestJson("/agent/requests", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          actionType: "execute",
-          targetChain: "people-paseo",
-          ownerAddress,
-          summary: form.summary,
-          value: "0",
-          program: {
-            transferAmount: form.amount,
-            beneficiary: form.beneficiary
-          }
-        })
-      });
-      setForm(EMPTY_FORM);
-    });
 
   const deployWallet = () =>
     submit("Preparing wallet", async () => {
@@ -202,13 +296,138 @@ export default function PortalClient({ initialState }) {
       });
     });
 
+  const initiateDemoAgent = () =>
+    submit("Initiating demo agent", async () => {
+      appendDemoLog("info", "[DEMO] Booting remote agent terminal.");
+
+      let demoSession = getReusableDemoSession(ownerAddress);
+      if (!demoSession) {
+        const sessionPrivateKey = generatePrivateKey();
+        const sessionPublicKey = privateKeyToAccount(sessionPrivateKey).address;
+        demoSession = upsertDemoSession(ownerAddress, {
+          ownerAddress,
+          sessionPrivateKey,
+          sessionPublicKey,
+          status: "generated",
+          createdAt: new Date().toISOString()
+        });
+        appendDemoLog("success", `[DEMO] Generated new session key ${shortHash(sessionPublicKey, 8, 8)}.`);
+      } else {
+        appendDemoLog("success", `[DEMO] Reusing local session key ${shortHash(demoSession.sessionPublicKey, 8, 8)}.`);
+      }
+
+      const created = await requestJson("/agent/requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actionType: "execute",
+          targetChain: "people-paseo",
+          ownerAddress,
+          sessionPublicKey: demoSession.sessionPublicKey,
+          summary: EMPTY_FORM.summary,
+          value: "0",
+          program: {
+            transferAmount: EMPTY_FORM.amount,
+            beneficiary: EMPTY_FORM.beneficiary
+          }
+        })
+      });
+
+      upsertDemoSession(ownerAddress, {
+        ...demoSession,
+        requestId: created.request.id,
+        status: "waiting-approval"
+      });
+      setDemoContext({
+        ownerAddress,
+        requestId: created.request.id,
+        sessionId: null,
+        sessionPublicKey: demoSession.sessionPublicKey,
+        status: "waiting-approval"
+      });
+      appendDemoLog("warning", `[DEMO] Request ${created.request.id} submitted. Waiting for owner approval.`);
+    });
+
+  const runDemoTransfer = () =>
+    submit("Running demo transfer", async () => {
+      if (!demoContext?.requestId || !demoContext?.sessionId) {
+        throw new Error("No approved demo session is ready");
+      }
+      const demoSession = getReusableDemoSession(ownerAddress);
+      if (!demoSession?.sessionPrivateKey) {
+        throw new Error("Local session key is missing. Start a new demo request.");
+      }
+
+      appendDemoLog("info", `[DEMO] Preparing bootstrap for ${demoContext.sessionId}.`);
+      const bootstrap = await requestJson("/agent/executions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestId: demoContext.requestId,
+          sessionId: demoContext.sessionId,
+          live: true,
+          prepare: "bootstrap"
+        })
+      });
+
+      if (bootstrap.prepared.kind === "bootstrap") {
+        throw new Error("This demo owner requires an owner signature path that is not exposed in the frontend");
+      }
+
+      await requestJson("/agent/executions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestId: demoContext.requestId,
+          sessionId: demoContext.sessionId,
+          live: true,
+          submit: "bootstrap"
+        })
+      });
+      appendDemoLog("success", `[DEMO] Session ${demoContext.sessionId} installed on wallet.`);
+
+      const preparedSession = await requestJson("/agent/executions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestId: demoContext.requestId,
+          sessionId: demoContext.sessionId,
+          live: true,
+          prepare: "session"
+        })
+      });
+      appendDemoLog("info", `[DEMO] Signing live payload ${shortHash(preparedSession.prepared.payloadHash, 8, 8)}.`);
+
+      const account = privateKeyToAccount(demoSession.sessionPrivateKey);
+      const sessionSignature = await account.signMessage({
+        message: { raw: preparedSession.prepared.payloadHash }
+      });
+
+      const submitted = await requestJson("/agent/executions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestId: demoContext.requestId,
+          sessionId: demoContext.sessionId,
+          live: true,
+          submit: "session",
+          signerAddress: demoSession.sessionPublicKey,
+          sessionSignature
+        })
+      });
+
+      appendDemoLog("success", `[DEMO] Live transfer submitted ${shortHash(submitted.execution.hubTxHash, 8, 8)}.`);
+      setDemoContext((current) => current ? { ...current, executionId: submitted.execution.id, status: "submitted" } : current);
+      await refresh();
+    });
+
   const pendingRequests = state.requests.filter((request) => request.status === "pending");
   const activeRequest = pendingRequests.length
     ? pendingRequests[activeRequestIndex % pendingRequests.length]
     : null;
   const stageSessions = state.sessions.filter((session) => session.status === "active" || session.status === "approved");
   const selectedSession = state.sessions.find((session) => session.id === sessionModalId) ?? null;
-  const consoleLines = buildConsoleLines(state, actionLabel, message);
+  const consoleLines = [...demoLogs, ...buildConsoleLines(state, actionLabel, message)].slice(0, 14);
 
   return (
     <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(64,182,255,0.18),_transparent_18%),linear-gradient(180deg,_#06111b_0%,_#081723_34%,_#0d1d2b_100%)] px-4 py-4 text-white md:px-8 md:py-6">
@@ -221,9 +440,7 @@ export default function PortalClient({ initialState }) {
               <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-cyan-100/70">
                 AI Agent Session Layer
               </p>
-              <h1 className="mt-1 text-lg font-semibold tracking-[0.04em] md:text-xl">
-                NOVA / Wallet Delegation Console
-              </h1>
+              <h1 className="mt-1 text-lg font-semibold tracking-[0.04em] md:text-xl">NOVA / Wallet Delegation Console</h1>
             </div>
           </div>
 
@@ -231,6 +448,14 @@ export default function PortalClient({ initialState }) {
             <div className="hidden rounded-full border border-white/10 bg-white/8 px-3 py-2 text-xs uppercase tracking-[0.2em] text-slate-200 md:block">
               {state.wallet.status}
             </div>
+            <button
+              className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-50 transition hover:-translate-y-0.5 hover:bg-emerald-300/16 disabled:opacity-50"
+              disabled={isPending}
+              onClick={initiateDemoAgent}
+              type="button"
+            >
+              Initiate demo agent
+            </button>
             <button
               className="rounded-full border border-cyan-300/30 bg-cyan-300/10 px-4 py-2 text-sm font-semibold text-cyan-50 transition hover:-translate-y-0.5 hover:bg-cyan-300/16 disabled:opacity-50"
               disabled={isPending}
@@ -252,10 +477,6 @@ export default function PortalClient({ initialState }) {
                 <div className="absolute left-1/2 top-5 h-[72px] w-[72px] -translate-x-1/2 rounded-full border border-cyan-200/20 bg-[radial-gradient(circle_at_50%_30%,rgba(255,255,255,0.7),rgba(111,214,255,0.16))] shadow-[0_0_60px_rgba(56,189,248,0.16)]" />
                 <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-cyan-100/70">Agent</p>
                 <h2 className="mt-3 text-4xl font-semibold tracking-[0.14em] text-cyan-50">NOVA</h2>
-                <p className="mt-4 max-w-[24ch] text-sm leading-7 text-slate-300">
-                  Active delegates orbit the agent. Pending approval stays isolated to the right-hand
-                  request stack.
-                </p>
                 <div className="mt-6 flex flex-wrap items-center justify-center gap-2">
                   <span className="rounded-full border border-white/10 bg-white/8 px-3 py-1 text-[0.68rem] uppercase tracking-[0.2em] text-slate-200">
                     Owner {shortHash(ownerAddress, 6, 6)}
@@ -267,8 +488,8 @@ export default function PortalClient({ initialState }) {
               </div>
 
               {stageSessions.length === 0 ? (
-                <div className="absolute inset-x-4 bottom-4 rounded-[1.4rem] border border-dashed border-white/15 bg-black/20 px-5 py-4 text-sm text-slate-300 backdrop-blur">
-                  No floating delegates yet.
+              <div className="absolute inset-x-4 bottom-4 rounded-[1.4rem] border border-dashed border-white/15 bg-black/20 px-5 py-4 text-sm text-slate-300 backdrop-blur">
+                  Waiting for approved delegates.
                 </div>
               ) : null}
 
@@ -378,14 +599,19 @@ export default function PortalClient({ initialState }) {
         <section className="rounded-[1.8rem] border border-white/10 bg-[rgba(5,13,22,0.76)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.24)] backdrop-blur-2xl">
           <div className="mb-4 flex items-center justify-between gap-4">
             <div>
-              <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-cyan-100/65">
-                Global session log
-              </p>
-              <p className="mt-1 text-sm text-slate-400">
-                All session traffic and approval state, tagged with session flags.
-              </p>
+              <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-cyan-100/65">Remote terminal</p>
+              <p className="mt-1 text-sm text-slate-400">Demo agent output, session flags, and execution traces.</p>
             </div>
-            {state.requests.some((request) => request.sessionId) ? (
+            {demoContext?.status === "approved" ? (
+              <button
+                className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-50 transition hover:-translate-y-0.5 hover:bg-emerald-300/16 disabled:opacity-50"
+                disabled={isPending}
+                onClick={runDemoTransfer}
+                type="button"
+              >
+                Run live transfer
+              </button>
+            ) : state.requests.some((request) => request.sessionId) ? (
               <div className="hidden flex-wrap gap-2 md:flex">
                 {state.requests
                   .filter((request) => request.sessionId)
@@ -405,7 +631,7 @@ export default function PortalClient({ initialState }) {
             ) : null}
           </div>
 
-          <div className="grid gap-2">
+          <div className="grid gap-2 rounded-[1.4rem] border border-white/10 bg-black/25 p-3">
             {consoleLines.map((line, index) => (
               <div
                 key={`${index}-${line.text}`}
@@ -487,97 +713,55 @@ export default function PortalClient({ initialState }) {
                 </button>
               </div>
 
-              <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-                <section className="rounded-[1.6rem] border border-white/10 bg-white/6 p-5">
-                  <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-cyan-100/65">
-                    Start here
-                  </p>
-                  <h2 className="mt-3 text-2xl font-semibold text-white">
-                    Base wallet + delegate manager
-                  </h2>
-                  <p className="mt-3 text-sm leading-7 text-slate-300">
-                    Prepare the wallet, define a scoped delegate request, then return to the main stage to
-                    approve and supervise the session.
-                  </p>
+              <div className="p-5">
+                <div className="mb-5 rounded-[1.4rem] border border-white/10 bg-white/6 px-4 py-4 text-sm text-slate-300">
+                  Base wallet preparation lives here. Demo session creation and live transfer are driven from the main surface through the agent terminal.
+                </div>
+                <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+                    <section className="rounded-[1.6rem] border border-white/10 bg-white/6 p-5">
+                      <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-cyan-100/65">
+                        Wallet
+                      </p>
+                      <h2 className="mt-3 text-2xl font-semibold text-white">
+                        Base wallet controls
+                      </h2>
+                      <div className="mt-5 grid gap-3">
+                        <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
+                          <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Wallet status</span>
+                          <strong className="mt-1 block text-sm text-slate-100">{state.wallet.status}</strong>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
+                          <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Predicted</span>
+                          <strong className="mt-1 block break-all text-sm text-slate-100">{state.wallet.predictedWalletAddress ?? "Unavailable"}</strong>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
+                          <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Deployed</span>
+                          <strong className="mt-1 block break-all text-sm text-slate-100">{state.wallet.deployedWalletAddress ?? "Not deployed"}</strong>
+                        </div>
+                      </div>
+                    </section>
 
-                  <div className="mt-5 grid gap-3">
-                    <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
-                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Wallet status</span>
-                      <strong className="mt-1 block text-sm text-slate-100">{state.wallet.status}</strong>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
-                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Predicted</span>
-                      <strong className="mt-1 block break-all text-sm text-slate-100">{state.wallet.predictedWalletAddress ?? "Unavailable"}</strong>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
-                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Deployed</span>
-                      <strong className="mt-1 block break-all text-sm text-slate-100">{state.wallet.deployedWalletAddress ?? "Not deployed"}</strong>
-                    </div>
-                  </div>
-                </section>
-
-                <section className="grid gap-5">
-                  <div className="rounded-[1.6rem] border border-white/10 bg-white/6 p-5">
-                    <label className="block">
-                      <span className="mb-2 block text-[0.68rem] font-black uppercase tracking-[0.24em] text-slate-400">
-                        Owner address
-                      </span>
-                      <input
-                        className="w-full rounded-2xl border border-white/10 bg-black/16 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/30"
-                        value={ownerAddress}
-                        onChange={(event) => setOwnerAddress(event.target.value)}
-                      />
-                    </label>
-                    <button
-                      className="mt-4 rounded-full border border-cyan-300/30 bg-cyan-300/14 px-4 py-3 text-sm font-semibold text-cyan-50 transition hover:-translate-y-0.5 disabled:opacity-50"
-                      disabled={isPending}
-                      onClick={deployWallet}
-                      type="button"
-                    >
-                      Prepare wallet
-                    </button>
-                  </div>
-
-                  <div className="rounded-[1.6rem] border border-white/10 bg-white/6 p-5">
-                    <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-cyan-100/65">
-                      New delegate request
-                    </p>
-                    <div className="mt-4 grid gap-4">
+                    <section className="rounded-[1.6rem] border border-white/10 bg-white/6 p-5">
                       <label className="block">
-                        <span className="mb-2 block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Summary</span>
+                        <span className="mb-2 block text-[0.68rem] font-black uppercase tracking-[0.24em] text-slate-400">
+                          Owner address
+                        </span>
                         <input
                           className="w-full rounded-2xl border border-white/10 bg-black/16 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/30"
-                          value={form.summary}
-                          onChange={(event) => setForm((current) => ({ ...current, summary: event.target.value }))}
+                          value={ownerAddress}
+                          onChange={(event) => setOwnerAddress(event.target.value)}
                         />
                       </label>
-                      <label className="block">
-                        <span className="mb-2 block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">PAS amount</span>
-                        <input
-                          className="w-full rounded-2xl border border-white/10 bg-black/16 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/30"
-                          value={form.amount}
-                          onChange={(event) => setForm((current) => ({ ...current, amount: event.target.value }))}
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="mb-2 block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Beneficiary AccountId32</span>
-                        <textarea
-                          className="min-h-28 w-full rounded-2xl border border-white/10 bg-black/16 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-300/30"
-                          value={form.beneficiary}
-                          onChange={(event) => setForm((current) => ({ ...current, beneficiary: event.target.value }))}
-                        />
-                      </label>
-                    </div>
-                    <button
-                      className="mt-4 rounded-full border border-cyan-300/30 bg-cyan-300/14 px-4 py-3 text-sm font-semibold text-cyan-50 transition hover:-translate-y-0.5 disabled:opacity-50"
-                      disabled={isPending}
-                      onClick={createRequest}
-                      type="button"
-                    >
-                      Create request
-                    </button>
+                      <button
+                        className="mt-4 rounded-full border border-cyan-300/30 bg-cyan-300/14 px-4 py-3 text-sm font-semibold text-cyan-50 transition hover:-translate-y-0.5 disabled:opacity-50"
+                        disabled={isPending}
+                        onClick={deployWallet}
+                        type="button"
+                      >
+                        Prepare wallet
+                      </button>
+                    </section>
                   </div>
-                </section>
               </div>
             </div>
           </div>

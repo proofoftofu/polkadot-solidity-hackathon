@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -33,12 +33,23 @@ async function ensureStore() {
 
 export async function readState() {
   const storePath = await ensureStore();
-  return JSON.parse(await readFile(storePath, "utf8"));
+  const raw = await readFile(storePath, "utf8");
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return cloneDefaultState();
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch (error) {
+    throw new Error(`State store is unreadable: ${error.message}`);
+  }
 }
 
 export async function writeState(state) {
   const storePath = await ensureStore();
-  await writeFile(storePath, JSON.stringify(state, null, 2));
+  const tempPath = `${storePath}.${crypto.randomUUID()}.tmp`;
+  await writeFile(tempPath, JSON.stringify(state, null, 2));
+  await rename(tempPath, storePath);
   return state;
 }
 
