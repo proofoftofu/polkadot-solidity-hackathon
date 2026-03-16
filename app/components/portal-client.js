@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
-import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { useEffect, useState } from "react";
 
 const EMPTY_FORM = {
   summary: "Send PAS from Polkadot Hub Testnet to People Chain Paseo",
@@ -133,6 +132,23 @@ function upsertDemoSession(ownerAddress, updates) {
   return store[key];
 }
 
+async function createDemoSessionKeyPair() {
+  const { generatePrivateKey, privateKeyToAccount } = await import("viem/accounts");
+  const sessionPrivateKey = generatePrivateKey();
+  return {
+    sessionPrivateKey,
+    sessionPublicKey: privateKeyToAccount(sessionPrivateKey).address
+  };
+}
+
+async function signDemoPayload(sessionPrivateKey, payloadHash) {
+  const { privateKeyToAccount } = await import("viem/accounts");
+  const account = privateKeyToAccount(sessionPrivateKey);
+  return account.signMessage({
+    message: { raw: payloadHash }
+  });
+}
+
 function pillTone(status) {
   if (status === "active" || status === "submitted" || status === "executed") {
     return "border-emerald-300/60 bg-emerald-400/15 text-emerald-100";
@@ -167,12 +183,12 @@ export default function PortalClient({ initialState }) {
   const [ownerAddress, setOwnerAddress] = useState(initialState.wallet.ownerAddress);
   const [message, setMessage] = useState("");
   const [actionLabel, setActionLabel] = useState("");
+  const [activeAction, setActiveAction] = useState(null);
   const [controlWindowOpen, setControlWindowOpen] = useState(false);
   const [sessionModalId, setSessionModalId] = useState(null);
   const [activeRequestIndex, setActiveRequestIndex] = useState(0);
   const [demoLogs, setDemoLogs] = useState([]);
   const [demoContext, setDemoContext] = useState(null);
-  const [isPending, startTransition] = useTransition();
 
   const appendDemoLog = (tone, text) => {
     setDemoLogs((current) => [
@@ -248,24 +264,24 @@ export default function PortalClient({ initialState }) {
     };
   }, [demoContext?.requestId, demoContext?.status]);
 
-  const submit = (label, work) => {
+  const submit = async (actionKey, label, work) => {
     setMessage("");
     setActionLabel(label);
-    startTransition(async () => {
-      try {
-        await work();
-        await refresh();
-        setMessage(`${label} completed.`);
-      } catch (error) {
-        setMessage(error.message);
-      } finally {
-        setActionLabel("");
-      }
-    });
+    setActiveAction(actionKey);
+    try {
+      await work();
+      await refresh();
+      setMessage(`${label} completed.`);
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setActionLabel("");
+      setActiveAction(null);
+    }
   };
 
   const deployWallet = () =>
-    submit("Preparing wallet", async () => {
+    submit("deploy-wallet", "Preparing wallet", async () => {
       await requestJson("/api/wallet/deploy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -274,7 +290,7 @@ export default function PortalClient({ initialState }) {
     });
 
   const approve = (request) =>
-    submit(`Approving ${request.id}`, async () => {
+    submit(`approve-${request.id}`, `Approving ${request.id}`, async () => {
       await requestJson(`/api/requests/${request.id}/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -283,12 +299,12 @@ export default function PortalClient({ initialState }) {
     });
 
   const reject = (id) =>
-    submit(`Rejecting ${id}`, async () => {
+    submit(`reject-${id}`, `Rejecting ${id}`, async () => {
       await requestJson(`/api/requests/${id}/reject`, { method: "POST" });
     });
 
   const execute = (requestId, sessionId) =>
-    submit(`Executing ${requestId}`, async () => {
+    submit(`execute-${requestId}`, `Executing ${requestId}`, async () => {
       await requestJson("/agent/executions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -297,13 +313,12 @@ export default function PortalClient({ initialState }) {
     });
 
   const initiateDemoAgent = () =>
-    submit("Initiating demo agent", async () => {
+    submit("initiate-demo", "Initiating demo agent", async () => {
       appendDemoLog("info", "[DEMO] Booting remote agent terminal.");
 
       let demoSession = getReusableDemoSession(ownerAddress);
       if (!demoSession) {
-        const sessionPrivateKey = generatePrivateKey();
-        const sessionPublicKey = privateKeyToAccount(sessionPrivateKey).address;
+        const { sessionPrivateKey, sessionPublicKey } = await createDemoSessionKeyPair();
         demoSession = upsertDemoSession(ownerAddress, {
           ownerAddress,
           sessionPrivateKey,
@@ -349,7 +364,7 @@ export default function PortalClient({ initialState }) {
     });
 
   const runDemoTransfer = () =>
-    submit("Running demo transfer", async () => {
+    submit("run-demo-transfer", "Running demo transfer", async () => {
       if (!demoContext?.requestId || !demoContext?.sessionId) {
         throw new Error("No approved demo session is ready");
       }
@@ -398,10 +413,10 @@ export default function PortalClient({ initialState }) {
       });
       appendDemoLog("info", `[DEMO] Signing live payload ${shortHash(preparedSession.prepared.payloadHash, 8, 8)}.`);
 
-      const account = privateKeyToAccount(demoSession.sessionPrivateKey);
-      const sessionSignature = await account.signMessage({
-        message: { raw: preparedSession.prepared.payloadHash }
-      });
+      const sessionSignature = await signDemoPayload(
+        demoSession.sessionPrivateKey,
+        preparedSession.prepared.payloadHash
+      );
 
       const submitted = await requestJson("/agent/executions", {
         method: "POST",
@@ -428,6 +443,7 @@ export default function PortalClient({ initialState }) {
   const stageSessions = state.sessions.filter((session) => session.status === "active" || session.status === "approved");
   const selectedSession = state.sessions.find((session) => session.id === sessionModalId) ?? null;
   const consoleLines = [...demoLogs, ...buildConsoleLines(state, actionLabel, message)].slice(0, 14);
+  const isRunning = (actionKey) => activeAction === actionKey;
 
   return (
     <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(64,182,255,0.18),_transparent_18%),linear-gradient(180deg,_#06111b_0%,_#081723_34%,_#0d1d2b_100%)] px-4 py-4 text-white md:px-8 md:py-6">
@@ -450,15 +466,14 @@ export default function PortalClient({ initialState }) {
             </div>
             <button
               className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-50 transition hover:-translate-y-0.5 hover:bg-emerald-300/16 disabled:opacity-50"
-              disabled={isPending}
+              disabled={isRunning("initiate-demo")}
               onClick={initiateDemoAgent}
               type="button"
             >
-              Initiate demo agent
+              {isRunning("initiate-demo") ? "Initiating..." : "Initiate demo agent"}
             </button>
             <button
               className="rounded-full border border-cyan-300/30 bg-cyan-300/10 px-4 py-2 text-sm font-semibold text-cyan-50 transition hover:-translate-y-0.5 hover:bg-cyan-300/16 disabled:opacity-50"
-              disabled={isPending}
               onClick={() => setControlWindowOpen(true)}
               type="button"
             >
@@ -575,19 +590,19 @@ export default function PortalClient({ initialState }) {
                   <div className="mt-6 flex flex-col gap-3 sm:flex-row">
                     <button
                       className="rounded-full border border-white/12 bg-white/8 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:-translate-y-0.5 disabled:opacity-50"
-                      disabled={isPending}
+                      disabled={isRunning(`reject-${activeRequest.id}`)}
                       onClick={() => reject(activeRequest.id)}
                       type="button"
                     >
-                      Decline
+                      {isRunning(`reject-${activeRequest.id}`) ? "Declining..." : "Decline"}
                     </button>
                     <button
                       className="rounded-full border border-cyan-300/30 bg-cyan-300/14 px-4 py-3 text-sm font-semibold text-cyan-50 transition hover:-translate-y-0.5 hover:bg-cyan-300/18 disabled:opacity-50"
-                      disabled={isPending}
+                      disabled={isRunning(`approve-${activeRequest.id}`)}
                       onClick={() => approve(activeRequest)}
                       type="button"
                     >
-                      {isPending ? "Working..." : "Approve session"}
+                      {isRunning(`approve-${activeRequest.id}`) ? "Approving..." : "Approve session"}
                     </button>
                   </div>
                 </article>
@@ -605,11 +620,11 @@ export default function PortalClient({ initialState }) {
             {demoContext?.status === "approved" ? (
               <button
                 className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-50 transition hover:-translate-y-0.5 hover:bg-emerald-300/16 disabled:opacity-50"
-                disabled={isPending}
+                disabled={isRunning("run-demo-transfer")}
                 onClick={runDemoTransfer}
                 type="button"
               >
-                Run live transfer
+                {isRunning("run-demo-transfer") ? "Running transfer..." : "Run live transfer"}
               </button>
             ) : state.requests.some((request) => request.sessionId) ? (
               <div className="hidden flex-wrap gap-2 md:flex">
@@ -620,11 +635,11 @@ export default function PortalClient({ initialState }) {
                     <button
                       key={request.id}
                       className="rounded-full border border-white/10 bg-white/8 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-200 transition hover:bg-white/12 disabled:opacity-50"
-                      disabled={isPending || request.status === "executed"}
+                      disabled={isRunning(`execute-${request.id}`) || request.status === "executed"}
                       onClick={() => execute(request.id, request.sessionId)}
                       type="button"
                     >
-                      {request.status === "executed" ? "Executed" : `Run ${request.id.slice(-4)}`}
+                      {request.status === "executed" ? "Executed" : isRunning(`execute-${request.id}`) ? "Running..." : `Run ${request.id.slice(-4)}`}
                     </button>
                   ))}
               </div>
@@ -754,11 +769,11 @@ export default function PortalClient({ initialState }) {
                       </label>
                       <button
                         className="mt-4 rounded-full border border-cyan-300/30 bg-cyan-300/14 px-4 py-3 text-sm font-semibold text-cyan-50 transition hover:-translate-y-0.5 disabled:opacity-50"
-                        disabled={isPending}
+                        disabled={isRunning("deploy-wallet")}
                         onClick={deployWallet}
                         type="button"
                       >
-                        Prepare wallet
+                        {isRunning("deploy-wallet") ? "Preparing..." : "Prepare wallet"}
                       </button>
                     </section>
                   </div>
