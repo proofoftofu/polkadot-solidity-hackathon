@@ -83,6 +83,11 @@ const CURRENT_DISPATCHER_ABI = [
 
 const CURRENT_ENTRY_POINT_ABI = [
   {
+    type: "error",
+    name: "AccountExecutionFailed",
+    inputs: [{ name: "reason", type: "bytes" }]
+  },
+  {
     type: "function",
     name: "handleOps",
     stateMutability: "nonpayable",

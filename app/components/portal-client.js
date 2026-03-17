@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const EMPTY_FORM = {
   summary: "Send PAS from Polkadot Hub Testnet to People Chain Paseo",
@@ -40,48 +40,26 @@ function shortHash(value, start = 8, end = 6) {
   return `${value.slice(0, start + 2)}...${value.slice(-end)}`;
 }
 
-function buildConsoleLines(state, actionLabel, message) {
-  const lines = [];
+function buildStateEventEntries(state) {
+  const entries = [];
 
-  if (actionLabel) {
-    lines.push({ tone: "info", text: `[ACTION] ${actionLabel}` });
-  }
-  if (message) {
-    lines.push({
-      tone: message.endsWith("completed.") ? "success" : "error",
-      text: `[NOTICE] ${message}`
-    });
-  }
-
-  for (const request of state.requests.filter((entry) => entry.status === "pending")) {
-    lines.push({
-      tone: "warning",
-      text: `[APPROVAL] ${request.id} · ${request.summary} · owner ${shortHash(request.userId, 8, 8)}`
+  for (const request of state.requests) {
+    entries.push({
+      key: `request:${request.id}:${request.status}`,
+      tone: request.status === "rejected" ? "error" : "info",
+      text: `[REQUEST:${request.status.toUpperCase()}] ${request.id} · ${shortHash(request.userId, 6, 6)}`
     });
   }
 
   for (const session of state.sessions) {
-    lines.push({
-      tone: session.status === "active" ? "success" : "info",
-      text: `[SESSION:${session.status.toUpperCase()}] ${session.id} · ${shortHash(session.sessionPublicKey)} · ${fmtDate(session.expiresAt)}`
+    entries.push({
+      key: `session:${session.id}:${session.status}`,
+      tone: "info",
+      text: `[SESSION:${session.status.toUpperCase()}] ${session.id} · ${shortHash(session.sessionPublicKey, 6, 6)}`
     });
   }
 
-  for (const execution of state.executions) {
-    lines.push({
-      tone: "success",
-      text: `[EXECUTION] ${execution.id} · ${shortHash(execution.hubTxHash ?? execution.userOpHash ?? "simulation")}`
-    });
-  }
-
-  if (lines.length === 0) {
-    lines.push({
-      tone: "muted",
-      text: "[SYSTEM] No requests or sessions yet. Start the demo agent to create the first delegate request."
-    });
-  }
-
-  return lines.slice(0, 10);
+  return entries;
 }
 
 function readDemoSessionStore() {
@@ -163,42 +141,60 @@ function pillTone(status) {
 }
 
 function lineTone(tone) {
-  if (tone === "success") {
-    return "border-emerald-400 bg-emerald-400/10 text-emerald-100";
-  }
-  if (tone === "warning") {
-    return "border-amber-300 bg-amber-300/10 text-amber-100";
-  }
   if (tone === "error") {
     return "border-rose-400 bg-rose-400/10 text-rose-100";
   }
-  if (tone === "muted") {
-    return "border-white/20 bg-white/5 text-slate-300";
-  }
   return "border-cyan-400 bg-cyan-400/10 text-cyan-100";
+}
+
+function blockscoutTxUrl(txHash) {
+  return `https://blockscout-testnet.polkadot.io/tx/${txHash}`;
 }
 
 export default function PortalClient({ initialState }) {
   const [state, setState] = useState(initialState);
   const [ownerAddress, setOwnerAddress] = useState(initialState.wallet.ownerAddress);
-  const [message, setMessage] = useState("");
-  const [actionLabel, setActionLabel] = useState("");
   const [activeAction, setActiveAction] = useState(null);
   const [controlWindowOpen, setControlWindowOpen] = useState(false);
   const [sessionModalId, setSessionModalId] = useState(null);
   const [activeRequestIndex, setActiveRequestIndex] = useState(0);
-  const [demoLogs, setDemoLogs] = useState([]);
+  const [terminalLogs, setTerminalLogs] = useState(() => [{
+    id: "system-initial",
+    tone: "info",
+    text: "[SYSTEM] No requests or sessions yet. Start the demo agent to create the first delegate request."
+  }]);
+  const [sessionLogs, setSessionLogs] = useState({});
   const [demoContext, setDemoContext] = useState(null);
+  const seenEventKeysRef = useRef(new Set());
 
-  const appendDemoLog = (tone, text) => {
-    setDemoLogs((current) => [
+  const appendLog = (tone, text, meta = null) => {
+    setTerminalLogs((current) => [
+      ...current,
       {
         id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
         tone,
-        text
-      },
-      ...current
-    ].slice(0, 14));
+        text,
+        ...meta
+      }
+    ].slice(-120));
+  };
+
+  const appendSessionLog = (sessionId, tone, text, meta = null) => {
+    if (!sessionId) {
+      return;
+    }
+    setSessionLogs((current) => ({
+      ...current,
+      [sessionId]: [
+        ...(current[sessionId] ?? []),
+        {
+          id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+          tone,
+          text,
+          ...meta
+        }
+      ].slice(-60)
+    }));
   };
 
   const refresh = async () => {
@@ -214,6 +210,29 @@ export default function PortalClient({ initialState }) {
   }, []);
 
   useEffect(() => {
+    const nextEntries = [];
+    for (const entry of buildStateEventEntries(state)) {
+      if (seenEventKeysRef.current.has(entry.key)) {
+        continue;
+      }
+      seenEventKeysRef.current.add(entry.key);
+      nextEntries.push({
+        id: entry.key,
+        tone: entry.tone,
+        text: entry.text
+      });
+    }
+
+    if (nextEntries.length > 0) {
+      setTerminalLogs((current) => [...current, ...nextEntries.map((entry) => ({
+        id: entry.id,
+        tone: entry.tone,
+        text: entry.text
+      }))].slice(-120));
+    }
+  }, [state]);
+
+  useEffect(() => {
     if (!demoContext?.requestId || demoContext.status !== "waiting-approval") {
       return undefined;
     }
@@ -227,8 +246,16 @@ export default function PortalClient({ initialState }) {
         }
         const request = payload.request;
         if (request.status === "approved" && request.sessionId) {
-          const sessionPayload = await requestJson(`/agent/sessions/${request.sessionId}`);
-          appendDemoLog("success", `[DEMO] Approval confirmed for ${request.id}. Session ${request.sessionId} is now active.`);
+          let sessionPayload = null;
+          try {
+            sessionPayload = await requestJson(`/agent/sessions/${request.sessionId}`);
+          } catch (error) {
+            if (error.message.includes("Session not found")) {
+              return;
+            }
+            throw error;
+          }
+          appendLog("info", `[DEMO] Approval confirmed for ${request.id}. Session ${request.sessionId} is now active.`);
           upsertDemoSession(request.userId, {
             ownerAddress: request.userId,
             requestId: request.id,
@@ -236,18 +263,19 @@ export default function PortalClient({ initialState }) {
             expiresAt: sessionPayload.session.expiresAt,
             status: "approved"
           });
+          appendSessionLog(request.sessionId, "info", "[DEMO] Session approved. Open this session to run the live demo transfer.");
           setDemoContext((current) => current ? { ...current, sessionId: request.sessionId, status: "approved" } : current);
           await refresh();
           return;
         }
         if (request.status === "rejected") {
-          appendDemoLog("error", `[DEMO] Request ${request.id} was rejected.`);
+          appendLog("error", `[DEMO] Request ${request.id} was rejected.`);
           setDemoContext((current) => current ? { ...current, status: "rejected" } : current);
           await refresh();
         }
       } catch (error) {
         if (!stopped) {
-          appendDemoLog("error", `[DEMO] Approval polling failed: ${error.message}`);
+          appendLog("error", `[DEMO] Approval polling failed: ${error.message}`);
         }
       }
     };
@@ -265,17 +293,15 @@ export default function PortalClient({ initialState }) {
   }, [demoContext?.requestId, demoContext?.status]);
 
   const submit = async (actionKey, label, work) => {
-    setMessage("");
-    setActionLabel(label);
+    appendLog("info", `[ACTION] ${label}`);
     setActiveAction(actionKey);
     try {
       await work();
       await refresh();
-      setMessage(`${label} completed.`);
+      appendLog("info", `[NOTICE] ${label} completed.`);
     } catch (error) {
-      setMessage(error.message);
+      appendLog("error", `[NOTICE] ${error.message}`);
     } finally {
-      setActionLabel("");
       setActiveAction(null);
     }
   };
@@ -291,11 +317,26 @@ export default function PortalClient({ initialState }) {
 
   const approve = (request) =>
     submit(`approve-${request.id}`, `Approving ${request.id}`, async () => {
-      await requestJson(`/api/requests/${request.id}/approve`, {
+      const approved = await requestJson(`/api/requests/${request.id}/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ownerAddress: request.userId })
       });
+
+      for (const txHash of approved.session?.approvalMeta?.dispatcherTransactions ?? []) {
+        appendLog("info", "[APPROVAL] tx sent", {
+          href: blockscoutTxUrl(txHash),
+          linkLabel: shortHash(txHash, 8, 8)
+        });
+        appendLog("info", "[APPROVAL] waiting for confirmation", {
+          href: blockscoutTxUrl(txHash),
+          linkLabel: shortHash(txHash, 8, 8)
+        });
+        appendLog("info", "[APPROVAL] tx confirmed", {
+          href: blockscoutTxUrl(txHash),
+          linkLabel: shortHash(txHash, 8, 8)
+        });
+      }
     });
 
   const reject = (id) =>
@@ -314,7 +355,7 @@ export default function PortalClient({ initialState }) {
 
   const initiateDemoAgent = () =>
     submit("initiate-demo", "Initiating demo agent", async () => {
-      appendDemoLog("info", "[DEMO] Booting remote agent terminal.");
+      appendLog("info", "[DEMO] Booting remote agent terminal.");
 
       let demoSession = getReusableDemoSession(ownerAddress);
       if (!demoSession) {
@@ -326,9 +367,9 @@ export default function PortalClient({ initialState }) {
           status: "generated",
           createdAt: new Date().toISOString()
         });
-        appendDemoLog("success", `[DEMO] Generated new session key ${shortHash(sessionPublicKey, 8, 8)}.`);
+        appendLog("info", `[DEMO] Generated new session key ${shortHash(sessionPublicKey, 8, 8)}.`);
       } else {
-        appendDemoLog("success", `[DEMO] Reusing local session key ${shortHash(demoSession.sessionPublicKey, 8, 8)}.`);
+        appendLog("info", `[DEMO] Reusing local session key ${shortHash(demoSession.sessionPublicKey, 8, 8)}.`);
       }
 
       const created = await requestJson("/agent/requests", {
@@ -360,7 +401,7 @@ export default function PortalClient({ initialState }) {
         sessionPublicKey: demoSession.sessionPublicKey,
         status: "waiting-approval"
       });
-      appendDemoLog("warning", `[DEMO] Request ${created.request.id} submitted. Waiting for owner approval.`);
+      appendLog("info", `[DEMO] Request ${created.request.id} submitted. Waiting for owner approval.`);
     });
 
   const runDemoTransfer = () =>
@@ -373,7 +414,7 @@ export default function PortalClient({ initialState }) {
         throw new Error("Local session key is missing. Start a new demo request.");
       }
 
-      appendDemoLog("info", `[DEMO] Preparing bootstrap for ${demoContext.sessionId}.`);
+      appendLog("info", `[DEMO] Preparing bootstrap for ${demoContext.sessionId}.`);
       const bootstrap = await requestJson("/agent/executions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -389,7 +430,7 @@ export default function PortalClient({ initialState }) {
         throw new Error("This demo owner requires an owner signature path that is not exposed in the frontend");
       }
 
-      await requestJson("/agent/executions", {
+      const bootstrapSubmission = await requestJson("/agent/executions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -399,7 +440,15 @@ export default function PortalClient({ initialState }) {
           submit: "bootstrap"
         })
       });
-      appendDemoLog("success", `[DEMO] Session ${demoContext.sessionId} installed on wallet.`);
+      appendSessionLog(
+        demoContext.sessionId,
+        "info",
+        `[DEMO] Session ${demoContext.sessionId} installed on wallet.`,
+        {
+          href: blockscoutTxUrl(bootstrapSubmission.submission?.txHash),
+          linkLabel: shortHash(bootstrapSubmission.submission?.txHash, 8, 8)
+        }
+      );
 
       const preparedSession = await requestJson("/agent/executions", {
         method: "POST",
@@ -411,7 +460,7 @@ export default function PortalClient({ initialState }) {
           prepare: "session"
         })
       });
-      appendDemoLog("info", `[DEMO] Signing live payload ${shortHash(preparedSession.prepared.payloadHash, 8, 8)}.`);
+      appendSessionLog("".concat(demoContext.sessionId), "info", `[DEMO] Signing live payload ${shortHash(preparedSession.prepared.payloadHash, 8, 8)}.`);
 
       const sessionSignature = await signDemoPayload(
         demoSession.sessionPrivateKey,
@@ -431,7 +480,15 @@ export default function PortalClient({ initialState }) {
         })
       });
 
-      appendDemoLog("success", `[DEMO] Live transfer submitted ${shortHash(submitted.execution.hubTxHash, 8, 8)}.`);
+      appendSessionLog(
+        demoContext.sessionId,
+        "info",
+        `[DEMO] Live transfer submitted. userOp ${shortHash(submitted.execution.userOpHash, 8, 8)}.`,
+        {
+          href: blockscoutTxUrl(submitted.execution.hubTxHash),
+          linkLabel: shortHash(submitted.execution.hubTxHash, 8, 8)
+        }
+      );
       setDemoContext((current) => current ? { ...current, executionId: submitted.execution.id, status: "submitted" } : current);
       await refresh();
     });
@@ -442,7 +499,8 @@ export default function PortalClient({ initialState }) {
     : null;
   const stageSessions = state.sessions.filter((session) => session.status === "active" || session.status === "approved");
   const selectedSession = state.sessions.find((session) => session.id === sessionModalId) ?? null;
-  const consoleLines = [...demoLogs, ...buildConsoleLines(state, actionLabel, message)].slice(0, 14);
+  const consoleLines = terminalLogs;
+  const selectedSessionLogs = selectedSession ? (sessionLogs[selectedSession.id] ?? []) : [];
   const isRunning = (actionKey) => activeAction === actionKey;
 
   return (
@@ -617,16 +675,7 @@ export default function PortalClient({ initialState }) {
               <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-cyan-100/65">Remote terminal</p>
               <p className="mt-1 text-sm text-slate-400">Demo agent output, session flags, and execution traces.</p>
             </div>
-            {demoContext?.status === "approved" ? (
-              <button
-                className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-50 transition hover:-translate-y-0.5 hover:bg-emerald-300/16 disabled:opacity-50"
-                disabled={isRunning("run-demo-transfer")}
-                onClick={runDemoTransfer}
-                type="button"
-              >
-                {isRunning("run-demo-transfer") ? "Running transfer..." : "Run live transfer"}
-              </button>
-            ) : state.requests.some((request) => request.sessionId) ? (
+            {state.requests.some((request) => request.sessionId) ? (
               <div className="hidden flex-wrap gap-2 md:flex">
                 {state.requests
                   .filter((request) => request.sessionId)
@@ -646,15 +695,27 @@ export default function PortalClient({ initialState }) {
             ) : null}
           </div>
 
-          <div className="grid gap-2 rounded-[1.4rem] border border-white/10 bg-black/25 p-3">
+          <div className="max-h-[240px] overflow-y-auto rounded-[1.4rem] border border-white/10 bg-black/30 p-3">
+            <div className="grid gap-1.5">
             {consoleLines.map((line, index) => (
               <div
-                key={`${index}-${line.text}`}
-                className={`rounded-xl border-l-4 px-4 py-3 font-mono text-sm ${lineTone(line.tone)}`}
+                key={line.id ?? `${index}-${line.text}`}
+                className={`rounded-lg border-l-4 px-3 py-2 font-mono text-xs leading-5 ${lineTone(line.tone)}`}
               >
-                {line.text}
+                <span>{line.text}</span>
+                {line.href ? (
+                  <a
+                    className="ml-2 text-cyan-200 underline underline-offset-4"
+                    href={line.href}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {line.linkLabel ?? "view tx"}
+                  </a>
+                ) : null}
               </div>
             ))}
+            </div>
           </div>
         </section>
 
@@ -681,22 +742,95 @@ export default function PortalClient({ initialState }) {
               </div>
 
               <div className="mt-6 grid gap-4 md:grid-cols-2">
-                <div className="rounded-[1.4rem] border border-white/10 bg-white/6 p-4">
+                <div className="min-w-0 rounded-[1.4rem] border border-white/10 bg-white/6 p-4">
                   <p className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Base wallet</p>
-                  <div className="mt-3 grid gap-2 text-sm text-slate-200">
-                    <div><span className="font-medium text-slate-400">Owner:</span> {selectedSession.ownerAddress}</div>
-                    <div><span className="font-medium text-slate-400">Wallet:</span> {selectedSession.walletAddress}</div>
-                    <div><span className="font-medium text-slate-400">Dispatcher:</span> {selectedSession.allowedTarget}</div>
-                    <div><span className="font-medium text-slate-400">Validator:</span> {selectedSession.validatorAddress}</div>
-                  </div>
+                  <dl className="mt-3 grid gap-3 text-sm text-slate-200">
+                    <div className="grid gap-1 rounded-xl border border-white/8 bg-black/15 px-3 py-2">
+                      <dt className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Owner</dt>
+                      <dd className="min-w-0 break-all font-mono text-xs leading-5 text-slate-100">{selectedSession.ownerAddress}</dd>
+                    </div>
+                    <div className="grid gap-1 rounded-xl border border-white/8 bg-black/15 px-3 py-2">
+                      <dt className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Wallet</dt>
+                      <dd className="min-w-0 break-all font-mono text-xs leading-5 text-slate-100">{selectedSession.walletAddress}</dd>
+                    </div>
+                    <div className="grid gap-1 rounded-xl border border-white/8 bg-black/15 px-3 py-2">
+                      <dt className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Dispatcher</dt>
+                      <dd className="min-w-0 break-all font-mono text-xs leading-5 text-slate-100">{selectedSession.allowedTarget}</dd>
+                    </div>
+                    <div className="grid gap-1 rounded-xl border border-white/8 bg-black/15 px-3 py-2">
+                      <dt className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Validator</dt>
+                      <dd className="min-w-0 break-all font-mono text-xs leading-5 text-slate-100">{selectedSession.validatorAddress}</dd>
+                    </div>
+                  </dl>
                 </div>
-                <div className="rounded-[1.4rem] border border-white/10 bg-white/6 p-4">
+                <div className="min-w-0 rounded-[1.4rem] border border-white/10 bg-white/6 p-4">
                   <p className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Delegate manager</p>
-                  <div className="mt-3 grid gap-2 text-sm text-slate-200">
-                    <div><span className="font-medium text-slate-400">Key:</span> {selectedSession.sessionPublicKey}</div>
-                    <div><span className="font-medium text-slate-400">Status:</span> {selectedSession.status}</div>
-                    <div><span className="font-medium text-slate-400">Expires:</span> {fmtDate(selectedSession.expiresAt)}</div>
-                    <div><span className="font-medium text-slate-400">Beneficiary:</span> {selectedSession.allowedBeneficiaries?.[0] ?? "Unknown"}</div>
+                  <dl className="mt-3 grid gap-3 text-sm text-slate-200">
+                    <div className="grid gap-1 rounded-xl border border-white/8 bg-black/15 px-3 py-2">
+                      <dt className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Session key</dt>
+                      <dd className="min-w-0 break-all font-mono text-xs leading-5 text-slate-100">{selectedSession.sessionPublicKey}</dd>
+                    </div>
+                    <div className="grid gap-1 rounded-xl border border-white/8 bg-black/15 px-3 py-2">
+                      <dt className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Status</dt>
+                      <dd className="text-sm text-slate-100">{selectedSession.status}</dd>
+                    </div>
+                    <div className="grid gap-1 rounded-xl border border-white/8 bg-black/15 px-3 py-2">
+                      <dt className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Expires</dt>
+                      <dd className="text-sm leading-5 text-slate-100">{fmtDate(selectedSession.expiresAt)}</dd>
+                    </div>
+                    <div className="grid gap-1 rounded-xl border border-white/8 bg-black/15 px-3 py-2">
+                      <dt className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Beneficiary</dt>
+                      <dd className="min-w-0 break-all font-mono text-xs leading-5 text-slate-100">{selectedSession.allowedBeneficiaries?.[0] ?? "Unknown"}</dd>
+                    </div>
+                  </dl>
+                </div>
+              </div>
+
+              <div className="mt-4 rounded-[1.4rem] border border-white/10 bg-white/6 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Demo transfer</p>
+                    <p className="mt-1 text-sm text-slate-300">Run the live transfer from this session view.</p>
+                  </div>
+                  <button
+                    className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-50 transition hover:-translate-y-0.5 hover:bg-emerald-300/16 disabled:opacity-50"
+                    disabled={
+                      isRunning("run-demo-transfer")
+                      || demoContext?.sessionId !== selectedSession.id
+                      || !["approved", "active", "submitted"].includes(selectedSession.status)
+                    }
+                    onClick={runDemoTransfer}
+                    type="button"
+                  >
+                    {isRunning("run-demo-transfer") ? "Running transfer..." : "Run live transfer"}
+                  </button>
+                </div>
+
+                <div className="mt-4 max-h-[220px] overflow-y-auto rounded-[1rem] border border-white/10 bg-black/30 p-3">
+                  <div className="grid gap-1.5">
+                    {selectedSessionLogs.length === 0 ? (
+                      <div className={`rounded-lg border-l-4 px-3 py-2 font-mono text-xs leading-5 ${lineTone("info")}`}>
+                        [DEMO] No live transfer activity yet.
+                      </div>
+                    ) : null}
+                    {selectedSessionLogs.map((line) => (
+                      <div
+                        key={line.id}
+                        className={`rounded-lg border-l-4 px-3 py-2 font-mono text-xs leading-5 ${lineTone(line.tone)}`}
+                      >
+                        <span>{line.text}</span>
+                        {line.href ? (
+                          <a
+                            className="ml-2 text-cyan-200 underline underline-offset-4"
+                            href={line.href}
+                            rel="noreferrer"
+                            target="_blank"
+                          >
+                            {line.linkLabel ?? "view tx"}
+                          </a>
+                        ) : null}
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -782,17 +916,6 @@ export default function PortalClient({ initialState }) {
           </div>
         ) : null}
 
-        {message ? (
-          <div
-            className={`fixed bottom-4 right-4 z-40 max-w-md rounded-2xl border px-4 py-3 text-sm font-medium shadow-lg backdrop-blur ${
-              message.endsWith("completed.")
-                ? "border-emerald-300/30 bg-emerald-400/12 text-emerald-100"
-                : "border-rose-300/30 bg-rose-400/12 text-rose-100"
-            }`}
-          >
-            {message}
-          </div>
-        ) : null}
       </div>
     </main>
   );

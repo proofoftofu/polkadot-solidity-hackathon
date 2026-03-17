@@ -37,6 +37,14 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function logApprovalStep(step, details) {
+  if (details === undefined) {
+    console.log(`[domain/approve] ${step}`);
+    return;
+  }
+  console.log(`[domain/approve] ${step}`, details);
+}
+
 function resolveOwnerAddress(ownerAddress) {
   const privateKey = getEnv("PRIVATE_KEY");
   const derivedOwner = privateKey ? privateKeyToAccount(privateKey.startsWith("0x") ? privateKey : `0x${privateKey}`).address : null;
@@ -321,12 +329,20 @@ async function readLiveWalletState(config, walletAddress) {
 
 async function ensureWallet(state, ownerAddress) {
   const normalizedOwner = resolveOwnerAddress(ownerAddress);
+  logApprovalStep("ensureWallet:start", { ownerAddress: normalizedOwner });
   let wallet = state.wallets.find((entry) => entry.ownerAddress === normalizedOwner);
   const config = await getContractsConfig();
 
   if (!wallet) {
+    logApprovalStep("ensureWallet:create-wallet-record");
     const predictedWalletAddress = await predictWalletAddress(normalizedOwner);
+    logApprovalStep("ensureWallet:predicted-wallet", { predictedWalletAddress });
     const liveState = await readLiveWalletState(config, predictedWalletAddress);
+    logApprovalStep("ensureWallet:live-wallet-state", {
+      deployed: liveState?.deployed ?? false,
+      nonce: liveState?.nonce?.toString?.() ?? null,
+      validatorInstalled: liveState?.validatorInstalled ?? false
+    });
     wallet = {
       ownerAddress: normalizedOwner,
       predictedWalletAddress,
@@ -340,6 +356,7 @@ async function ensureWallet(state, ownerAddress) {
     };
     state.wallets.unshift(wallet);
   } else if (!wallet.predictedWalletAddress) {
+    logApprovalStep("ensureWallet:backfill-predicted-wallet");
     wallet.predictedWalletAddress = await predictWalletAddress(normalizedOwner);
     if (wallet.predictedWalletAddress) {
       wallet.status = wallet.deployedWalletAddress ? wallet.status : "predicted";
@@ -348,6 +365,9 @@ async function ensureWallet(state, ownerAddress) {
   }
 
   if (wallet.predictedWalletAddress) {
+    logApprovalStep("ensureWallet:refresh-live-wallet-state", {
+      predictedWalletAddress: wallet.predictedWalletAddress
+    });
     const liveState = await readLiveWalletState(config, wallet.predictedWalletAddress);
     if (liveState?.deployed) {
       wallet.deployedWalletAddress = wallet.predictedWalletAddress;
@@ -365,14 +385,38 @@ async function ensureWallet(state, ownerAddress) {
     }
   }
 
+  logApprovalStep("ensureWallet:done", {
+    ownerAddress: wallet.ownerAddress,
+    predictedWalletAddress: wallet.predictedWalletAddress,
+    deployedWalletAddress: wallet.deployedWalletAddress,
+    status: wallet.status,
+    liveNonce: wallet.liveNonce,
+    validatorInstalled: wallet.validatorInstalled
+  });
   return wallet;
 }
 
 async function ensureDispatcher(state, wallet, fallbackDispatcherAddress) {
+  logApprovalStep("ensureDispatcher:start", {
+    walletAddress: wallet.predictedWalletAddress,
+    existingDispatcherAddress: wallet.dispatcherAddress ?? null,
+    fallbackDispatcherAddress
+  });
   if (process.env.APP_DISABLE_DISPATCHER_RUNTIME === "true" || !getEnv("PRIVATE_KEY")) {
     wallet.dispatcherAddress = wallet.dispatcherAddress ?? fallbackDispatcherAddress;
     wallet.dispatcherPreparedAt = wallet.dispatcherPreparedAt ?? nowIso();
     wallet.updatedAt = nowIso();
+    logApprovalStep("ensureDispatcher:runtime-disabled", {
+      dispatcherAddress: wallet.dispatcherAddress
+    });
+    return { dispatcherAddress: wallet.dispatcherAddress };
+  }
+
+  if (wallet.dispatcherAddress && wallet.dispatcherPreparedAt) {
+    logApprovalStep("ensureDispatcher:cached", {
+      dispatcherAddress: wallet.dispatcherAddress,
+      dispatcherPreparedAt: wallet.dispatcherPreparedAt
+    });
     return { dispatcherAddress: wallet.dispatcherAddress };
   }
 
@@ -384,6 +428,11 @@ async function ensureDispatcher(state, wallet, fallbackDispatcherAddress) {
   wallet.dispatcherAddress = prepared.dispatcherAddress;
   wallet.dispatcherPreparedAt = nowIso();
   wallet.updatedAt = nowIso();
+  logApprovalStep("ensureDispatcher:done", {
+    dispatcherAddress: prepared.dispatcherAddress,
+    walletTopUpTx: prepared.walletTopUpTx ?? null,
+    dispatcherDerivedFundTx: prepared.dispatcherDerivedFundTx ?? null
+  });
   return prepared;
 }
 
@@ -471,6 +520,8 @@ export async function rejectRequest(id) {
 }
 
 export async function approveRequest(id, ownerAddress) {
+  const startedAt = Date.now();
+  logApprovalStep("start", { id, ownerAddress: ownerAddress ?? null });
   const state = await readState();
   const request = state.requests.find((entry) => entry.id === id);
   if (!request) {
@@ -482,14 +533,36 @@ export async function approveRequest(id, ownerAddress) {
   if (ownerAddress && getAddress(ownerAddress) !== getAddress(request.userId)) {
     throw new Error("Approval ownerAddress must match the request ownerAddress");
   }
+  logApprovalStep("request-loaded", {
+    requestId: request.id,
+    ownerAddress: request.userId,
+    sessionPublicKey: request.sessionPublicKey,
+    targetChain: request.targetChain
+  });
 
   const wallet = await ensureWallet(state, request.userId);
   const config = await getContractsConfig();
+  logApprovalStep("contracts-loaded", {
+    walletFactory: config.hubDeployment.contracts.walletFactory,
+    dispatcher: config.hubDeployment.contracts.crossChainDispatcher,
+    validator: config.hubDeployment.contracts.sessionKeyValidatorModule
+  });
   const dispatcher = await ensureDispatcher(state, wallet, config.hubDeployment.contracts.crossChainDispatcher);
+  logApprovalStep("dispatcher-ready", {
+    dispatcherAddress: dispatcher.dispatcherAddress,
+    walletTopUpTx: dispatcher.walletTopUpTx ?? null,
+    dispatcherDerivedFundTx: dispatcher.dispatcherDerivedFundTx ?? null
+  });
   const expiresAt = new Date(Date.now() + DEFAULT_SESSION_DURATION_SECONDS * 1000).toISOString();
   const maxAmount = BigInt(request.program.instructions[0].amount);
   const beneficiary = request.program.instructions[3].accountId32;
   const paraId = request.program.instructions[2].paraId;
+  logApprovalStep("session-constraints", {
+    expiresAt,
+    maxAmount: maxAmount.toString(),
+    beneficiary,
+    paraId
+  });
   const sessionInstallData = buildSessionInstallData(
     request.sessionPublicKey,
     dispatcher.dispatcherAddress,
@@ -499,6 +572,10 @@ export async function approveRequest(id, ownerAddress) {
     expiresAt
   );
   const walletAddress = wallet.deployedWalletAddress ?? wallet.predictedWalletAddress;
+  logApprovalStep("session-install-data-built", {
+    walletAddress,
+    sessionInstallDataBytes: sessionInstallData.length
+  });
 
   const session = {
     id: makeId("session"),
@@ -539,8 +616,25 @@ export async function approveRequest(id, ownerAddress) {
   request.sessionId = session.id;
   request.updatedAt = nowIso();
   state.sessions.unshift(session);
+  logApprovalStep("state-write:start", {
+    requestId: request.id,
+    sessionId: session.id
+  });
   await writeState(toSerializable(state));
-  return sanitizeSession(session);
+  logApprovalStep("state-write:done", {
+    requestId: request.id,
+    sessionId: session.id,
+    elapsedMs: Date.now() - startedAt
+  });
+  return {
+    ...sanitizeSession(session),
+    approvalMeta: {
+      dispatcherTransactions: [
+        dispatcher.walletTopUpTx,
+        dispatcher.dispatcherDerivedFundTx
+      ].filter(Boolean)
+    }
+  };
 }
 
 export async function listSessions() {

@@ -24,6 +24,7 @@ function parseOutput(stdout) {
 export async function prepareWalletDispatcher(walletAddress, existingDispatcherAddress) {
   const operatorPrivateKey = getRequiredEnv("PRIVATE_KEY");
   console.log("[dispatcher-runtime] prepare", { walletAddress, existingDispatcherAddress });
+  const startedAt = Date.now();
 
   return new Promise((resolve, reject) => {
     const child = spawn("node", ["scripts/app-prepare-dispatcher.js"], {
@@ -41,15 +42,34 @@ export async function prepareWalletDispatcher(walletAddress, existingDispatcherA
     let stderr = "";
 
     child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
+      const text = chunk.toString();
+      stdout += text;
+      for (const line of text.split(/\r?\n/)) {
+        if (line.trim()) {
+          console.log("[dispatcher-runtime][stdout]", line.trim());
+        }
+      }
     });
 
     child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
+      const text = chunk.toString();
+      stderr += text;
+      for (const line of text.split(/\r?\n/)) {
+        if (line.trim()) {
+          console.error("[dispatcher-runtime][stderr]", line.trim());
+        }
+      }
     });
 
-    child.on("error", reject);
+    child.on("error", (error) => {
+      console.error("[dispatcher-runtime] child-error", error);
+      reject(error);
+    });
     child.on("close", (code) => {
+      console.log("[dispatcher-runtime] close", {
+        code,
+        elapsedMs: Date.now() - startedAt
+      });
       if (code !== 0) {
         reject(new Error(stderr.trim() || stdout.trim() || `app-prepare-dispatcher.js failed with exit code ${code}`));
         return;
@@ -63,6 +83,9 @@ export async function prepareWalletDispatcher(walletAddress, existingDispatcherA
         dispatcherBalance: parsed.dispatcherBalance,
         dispatcherDerivedAccountId32: parsed.dispatcherDerivedAccountId32,
         dispatcherDerivedBalance: parsed.dispatcherDerivedBalance,
+        dispatcherDeployTx: parsed.dispatcherDeployTx,
+        walletTopUpTx: parsed.walletTopUpTx,
+        dispatcherDerivedFundTx: parsed.dispatcherDerivedFundTx,
         stdout,
         stderr
       });
