@@ -10,13 +10,14 @@ const EMPTY_FORM = {
 
 const DEMO_SESSION_STORAGE_KEY = "nova-demo-session-keys";
 const OWNER_WALLET_STORAGE_KEY = "nova-owner-eoa";
+const SESSION_LAYOUT_STORAGE_KEY = "nova-session-layout";
 const HUB_RPC_URL = "https://eth-rpc-testnet.polkadot.io";
 
 const CHIP_POSITIONS = [
-  "left-4 top-6 md:left-10 md:top-10",
-  "right-4 top-10 md:right-10 md:top-16",
-  "left-8 bottom-8 md:left-16 md:bottom-14",
-  "right-6 bottom-10 md:right-20 md:bottom-16"
+  { x: 24, y: 24 },
+  { x: 540, y: 40 },
+  { x: 72, y: 336 },
+  { x: 500, y: 360 }
 ];
 
 async function requestJson(url, options) {
@@ -46,18 +47,22 @@ function buildStateEventEntries(state) {
   const entries = [];
 
   for (const request of state.requests) {
+    const visibleStatus = request.status === "pending" ? "requested" : request.status;
     entries.push({
       key: `request:${request.id}:${request.status}`,
       tone: request.status === "rejected" ? "error" : "info",
-      text: `[REQUEST:${request.status.toUpperCase()}] ${request.id} · ${shortHash(request.userId, 6, 6)}`
+      text: `[REQUEST:${visibleStatus.toUpperCase()}] ${request.id} · ${shortHash(request.userId, 6, 6)}`
     });
   }
 
   for (const session of state.sessions) {
+    const visibleStatus = session.status === "approved" || session.status === "active"
+      ? "approved"
+      : session.status;
     entries.push({
       key: `session:${session.id}:${session.status}`,
       tone: "info",
-      text: `[SESSION:${session.status.toUpperCase()}] ${session.id} · ${shortHash(session.sessionPublicKey, 6, 6)}`
+      text: `[SESSION:${visibleStatus.toUpperCase()}] ${session.id} · ${shortHash(session.sessionPublicKey, 6, 6)}`
     });
   }
 
@@ -100,6 +105,25 @@ function writeDemoSessionStore(store) {
     return;
   }
   window.localStorage.setItem(DEMO_SESSION_STORAGE_KEY, JSON.stringify(store));
+}
+
+function readSessionLayoutStore() {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const raw = window.localStorage.getItem(SESSION_LAYOUT_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSessionLayoutStore(store) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(SESSION_LAYOUT_STORAGE_KEY, JSON.stringify(store));
 }
 
 function getReusableDemoSession(ownerAddress) {
@@ -180,6 +204,17 @@ function pillTone(status) {
   return "border-white/20 bg-white/10 text-white";
 }
 
+function visibleRequestStatus(status) {
+  return status === "pending" ? "requested" : status;
+}
+
+function visibleSessionStatus(status) {
+  if (status === "approved" || status === "active") {
+    return "approved";
+  }
+  return status;
+}
+
 function lineTone(tone) {
   if (tone === "error") {
     return "border-rose-400 bg-rose-400/10 text-rose-100";
@@ -205,7 +240,10 @@ export default function PortalClient({ initialState }) {
   }]);
   const [sessionLogs, setSessionLogs] = useState({});
   const [demoContext, setDemoContext] = useState(null);
+  const [sessionPositions, setSessionPositions] = useState({});
   const seenEventKeysRef = useRef(new Set());
+  const stageRef = useRef(null);
+  const dragStateRef = useRef(null);
 
   const appendLog = (tone, text, meta = null) => {
     setTerminalLogs((current) => [
@@ -242,12 +280,33 @@ export default function PortalClient({ initialState }) {
     setState(snapshot);
   };
 
+  const persistSessionPosition = (sessionId, position) => {
+    setSessionPositions((current) => {
+      const next = { ...current, [sessionId]: position };
+      writeSessionLayoutStore(next);
+      return next;
+    });
+  };
+
+  const removeSessionPosition = (sessionId) => {
+    setSessionPositions((current) => {
+      const next = { ...current };
+      delete next[sessionId];
+      writeSessionLayoutStore(next);
+      return next;
+    });
+  };
+
   useEffect(() => {
     ensureLocalOwnerWallet()
       .then((wallet) => {
         setOwnerAddress(wallet.address);
       })
       .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    setSessionPositions(readSessionLayoutStore());
   }, []);
 
   useEffect(() => {
@@ -455,15 +514,6 @@ export default function PortalClient({ initialState }) {
       await requestJson(`/api/requests/${id}/reject`, { method: "POST" });
     });
 
-  const execute = (requestId, sessionId) =>
-    submit(`execute-${requestId}`, `Executing ${requestId}`, async () => {
-      await requestJson("/agent/executions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ requestId, sessionId })
-      });
-    });
-
   const initiateDemoAgent = () =>
     submit("initiate-demo", "Initiating demo agent", async () => {
       appendLog("info", "[DEMO] Booting remote agent terminal.");
@@ -620,6 +670,74 @@ export default function PortalClient({ initialState }) {
       await refresh();
     });
 
+  const removeSession = (session) =>
+    submit(`remove-session-${session.id}`, `Removing ${session.id}`, async () => {
+      await requestJson(`/api/sessions/${session.id}`, { method: "DELETE" });
+      removeSessionPosition(session.id);
+      if (demoContext?.sessionId === session.id) {
+        setDemoContext((current) => current ? { ...current, sessionId: null, status: "idle" } : current);
+      }
+      const saved = getReusableDemoSession(session.ownerAddress);
+      if (saved?.sessionId === session.id) {
+        upsertDemoSession(session.ownerAddress, {
+          sessionId: null,
+          requestId: null,
+          status: "removed",
+          expiresAt: null
+        });
+      }
+      setSessionModalId(null);
+      appendLog("info", `[SESSION] ${session.id} removed from the console.`);
+    });
+
+  const getSessionPosition = (session, index) => sessionPositions[session.id] ?? (CHIP_POSITIONS[index] ?? CHIP_POSITIONS[0]);
+
+  const startSessionDrag = (event, session, index) => {
+    if (!stageRef.current) {
+      return;
+    }
+    const stageRect = stageRef.current.getBoundingClientRect();
+    const origin = getSessionPosition(session, index);
+    dragStateRef.current = {
+      sessionId: session.id,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: origin.x,
+      originY: origin.y,
+      moved: false,
+      stageRect
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const updateSessionDrag = (event) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    const deltaX = event.clientX - drag.startX;
+    const deltaY = event.clientY - drag.startY;
+    if (Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4) {
+      drag.moved = true;
+    }
+    persistSessionPosition(drag.sessionId, {
+      x: Math.max(12, Math.min(drag.originX + deltaX, drag.stageRect.width - 184)),
+      y: Math.max(12, Math.min(drag.originY + deltaY, drag.stageRect.height - 140))
+    });
+  };
+
+  const endSessionDrag = (event, session) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+    dragStateRef.current = null;
+    if (!drag.moved) {
+      setSessionModalId(session.id);
+    }
+  };
+
   const pendingRequests = state.requests.filter((request) => request.status === "pending");
   const activeRequest = pendingRequests.length
     ? pendingRequests[activeRequestIndex % pendingRequests.length]
@@ -646,9 +764,6 @@ export default function PortalClient({ initialState }) {
           </div>
 
           <div className="flex items-center gap-2 md:gap-3">
-            <div className="hidden rounded-full border border-white/10 bg-white/8 px-3 py-2 text-xs uppercase tracking-[0.2em] text-slate-200 md:block">
-              {state.wallet.status}
-            </div>
             <button
               className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-50 transition hover:-translate-y-0.5 hover:bg-emerald-300/16 disabled:opacity-50"
               disabled={isRunning("initiate-demo")}
@@ -669,7 +784,10 @@ export default function PortalClient({ initialState }) {
 
         <section className="grid gap-5 xl:grid-cols-[minmax(0,1.12fr)_360px]">
           <div className="rounded-[2rem] border border-white/10 bg-white/5 p-3 shadow-[0_24px_100px_rgba(0,0,0,0.22)] backdrop-blur-xl md:p-4">
-            <div className="relative min-h-[560px] overflow-hidden rounded-[1.7rem] border border-white/10 bg-[radial-gradient(circle_at_50%_22%,rgba(102,196,255,0.18),transparent_18%),linear-gradient(180deg,rgba(255,255,255,0.07),rgba(255,255,255,0.03))]">
+            <div
+              ref={stageRef}
+              className="relative min-h-[560px] overflow-hidden rounded-[1.7rem] border border-white/10 bg-[radial-gradient(circle_at_50%_22%,rgba(102,196,255,0.18),transparent_18%),linear-gradient(180deg,rgba(255,255,255,0.07),rgba(255,255,255,0.03))]"
+            >
               <div className="absolute inset-0 bg-[linear-gradient(rgba(144,202,249,0.06)_1px,transparent_1px),linear-gradient(90deg,rgba(144,202,249,0.06)_1px,transparent_1px)] bg-[size:64px_64px]" />
 
               <div className="relative mx-auto mt-14 flex min-h-[360px] w-full max-w-[320px] flex-col items-center rounded-[160px_160px_36px_36px] border border-white/15 bg-[linear-gradient(180deg,rgba(201,238,255,0.12),rgba(255,255,255,0.04))] px-8 pb-10 pt-24 text-center shadow-[0_24px_80px_rgba(4,12,24,0.42)] backdrop-blur-xl">
@@ -696,8 +814,12 @@ export default function PortalClient({ initialState }) {
               {stageSessions.slice(0, 4).map((session, index) => (
                 <button
                   key={session.id}
-                  className={`absolute ${CHIP_POSITIONS[index] ?? CHIP_POSITIONS[0]} w-[172px] rounded-[1.4rem] border border-white/12 bg-white/9 p-4 text-left shadow-[0_16px_56px_rgba(2,8,18,0.36)] backdrop-blur-xl transition hover:-translate-y-1 hover:border-cyan-300/30 hover:bg-white/12`}
-                  onClick={() => setSessionModalId(session.id)}
+                  className="absolute w-[172px] touch-none rounded-[1.4rem] border border-white/12 bg-white/9 p-4 text-left shadow-[0_16px_56px_rgba(2,8,18,0.36)] backdrop-blur-xl transition hover:border-cyan-300/30 hover:bg-white/12"
+                  onPointerCancel={(event) => endSessionDrag(event, session)}
+                  onPointerDown={(event) => startSessionDrag(event, session, index)}
+                  onPointerMove={updateSessionDrag}
+                  onPointerUp={(event) => endSessionDrag(event, session)}
+                  style={getSessionPosition(session, index)}
                   type="button"
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -705,7 +827,7 @@ export default function PortalClient({ initialState }) {
                       {session.id.replace("session_", "").slice(0, 10)}
                     </strong>
                     <span className={`rounded-full border px-2 py-0.5 text-[0.58rem] font-semibold uppercase tracking-[0.16em] ${pillTone(session.status)}`}>
-                      {session.status}
+                      {visibleSessionStatus(session.status)}
                     </span>
                   </div>
                   <p className="mt-3 text-sm leading-6 text-slate-200">
@@ -800,26 +922,8 @@ export default function PortalClient({ initialState }) {
           <div className="mb-4 flex items-center justify-between gap-4">
             <div>
               <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-cyan-100/65">Remote terminal</p>
-              <p className="mt-1 text-sm text-slate-400">Demo agent output, session flags, and execution traces.</p>
+              <p className="mt-1 text-sm text-slate-400">Demo agent output, session flags, and execution traces. Run actions from the session modal.</p>
             </div>
-            {state.requests.some((request) => request.sessionId) ? (
-              <div className="hidden flex-wrap gap-2 md:flex">
-                {state.requests
-                  .filter((request) => request.sessionId)
-                  .slice(0, 3)
-                  .map((request) => (
-                    <button
-                      key={request.id}
-                      className="rounded-full border border-white/10 bg-white/8 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-slate-200 transition hover:bg-white/12 disabled:opacity-50"
-                      disabled={isRunning(`execute-${request.id}`) || request.status === "executed"}
-                      onClick={() => execute(request.id, request.sessionId)}
-                      type="button"
-                    >
-                      {request.status === "executed" ? "Executed" : isRunning(`execute-${request.id}`) ? "Running..." : `Run ${request.id.slice(-4)}`}
-                    </button>
-                  ))}
-              </div>
-            ) : null}
           </div>
 
           <div className="max-h-[240px] overflow-y-auto rounded-[1.4rem] border border-white/10 bg-black/30 p-3">
@@ -859,13 +963,23 @@ export default function PortalClient({ initialState }) {
                   </p>
                   <h2 className="mt-2 text-3xl font-semibold text-white">{selectedSession.id}</h2>
                 </div>
-                <button
-                  className="rounded-full border border-white/10 bg-white/8 px-4 py-2 text-sm font-semibold text-slate-100 transition hover:bg-white/12"
-                  onClick={() => setSessionModalId(null)}
-                  type="button"
-                >
-                  Close
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className="rounded-full border border-rose-300/30 bg-rose-300/10 px-4 py-2 text-sm font-semibold text-rose-50 transition hover:bg-rose-300/16 disabled:opacity-50"
+                    disabled={isRunning(`remove-session-${selectedSession.id}`)}
+                    onClick={() => removeSession(selectedSession)}
+                    type="button"
+                  >
+                    {isRunning(`remove-session-${selectedSession.id}`) ? "Removing..." : "Remove session"}
+                  </button>
+                  <button
+                    className="rounded-full border border-white/10 bg-white/8 px-4 py-2 text-sm font-semibold text-slate-100 transition hover:bg-white/12"
+                    onClick={() => setSessionModalId(null)}
+                    type="button"
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
 
               <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -899,7 +1013,7 @@ export default function PortalClient({ initialState }) {
                     </div>
                     <div className="grid gap-1 rounded-xl border border-white/8 bg-black/15 px-3 py-2">
                       <dt className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Status</dt>
-                      <dd className="text-sm text-slate-100">{selectedSession.status}</dd>
+                      <dd className="text-sm text-slate-100">{visibleSessionStatus(selectedSession.status)}</dd>
                     </div>
                     <div className="grid gap-1 rounded-xl border border-white/8 bg-black/15 px-3 py-2">
                       <dt className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Expires</dt>

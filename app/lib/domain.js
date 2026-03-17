@@ -704,6 +704,28 @@ export async function listSessions() {
   return state.sessions.map((session) => sanitizeSession(session));
 }
 
+export async function removeSessionById(id) {
+  const state = await readState();
+  const sessionIndex = state.sessions.findIndex((entry) => entry.id === id);
+  if (sessionIndex === -1) {
+    throw new Error("Session not found");
+  }
+
+  const [session] = state.sessions.splice(sessionIndex, 1);
+  const request = state.requests.find((entry) => entry.id === session.requestId);
+  if (request?.sessionId === session.id) {
+    delete request.sessionId;
+    if (request.status !== "rejected") {
+      request.status = "approved";
+    }
+    request.updatedAt = nowIso();
+  }
+
+  state.executions = state.executions.filter((entry) => entry.sessionId !== session.id);
+  await writeState(toSerializable(state));
+  return sanitizeSession(session);
+}
+
 export async function getSessionById(id) {
   return getSessionRecord(id);
 }
