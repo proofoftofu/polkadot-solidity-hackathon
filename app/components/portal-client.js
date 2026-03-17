@@ -10,7 +10,7 @@ const EMPTY_FORM = {
 
 const DEMO_SESSION_STORAGE_KEY = "nova-demo-session-keys";
 const OWNER_WALLET_STORAGE_KEY = "nova-owner-eoa";
-const HUB_RPC_URL = "https://services.polkadothub-rpc.com/testnet";
+const HUB_RPC_URL = "https://eth-rpc-testnet.polkadot.io";
 
 const CHIP_POSITIONS = [
   "left-4 top-6 md:left-10 md:top-10",

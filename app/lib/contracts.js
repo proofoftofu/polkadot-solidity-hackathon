@@ -3,12 +3,14 @@ import path from "node:path";
 import { createPublicClient, getContract, http } from "viem";
 
 import { POLKADOT_HUB_CHAIN_ID } from "./constants.js";
+import { getEnv } from "./server-env.js";
 
 const CONTRACTS_ROOT = path.join(process.cwd(), "..", "contracts");
 const DEPLOYMENTS_ROOT = path.join(CONTRACTS_ROOT, "deployments");
 const ABI_ROOT = path.join(DEPLOYMENTS_ROOT, "abi");
 
 let cache;
+const DEFAULT_POLKADOT_RPC_URL = "https://eth-rpc-testnet.polkadot.io";
 
 const CURRENT_WALLET_FACTORY_ABI = [
   {
@@ -168,14 +170,14 @@ export async function getContractsConfig() {
     cache = {
       addresses,
       hubDeployment,
-      rpcUrl: "https://services.polkadothub-rpc.com/testnet",
+      rpcUrl: getEnv("POLKADOT_RPC_URL", DEFAULT_POLKADOT_RPC_URL),
       chain: {
         id: Number(POLKADOT_HUB_CHAIN_ID),
         name: "Polkadot Hub Testnet",
         nativeCurrency: { name: "Native", symbol: "NATIVE", decimals: 18 },
         rpcUrls: {
           default: {
-            http: ["https://services.polkadothub-rpc.com/testnet"]
+            http: [getEnv("POLKADOT_RPC_URL", DEFAULT_POLKADOT_RPC_URL)]
           }
         }
       },
