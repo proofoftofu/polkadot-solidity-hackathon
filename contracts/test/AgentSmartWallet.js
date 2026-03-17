@@ -244,6 +244,42 @@ async function buildBootstrapUserOp({
   return { userOp, userOpHash };
 }
 
+async function buildOwnerRelayUserOp({
+  entryPoint,
+  wallet,
+  owner,
+  callData,
+  nonce = 0n,
+  targetChainId
+}) {
+  const userOp = {
+    sender: wallet.address,
+    nonce,
+    initCode: "0x",
+    callData,
+    accountGasLimits: zeroHash,
+    preVerificationGas: 0n,
+    gasFees: zeroHash,
+    paymasterAndData: "0x",
+    signature: "0x"
+  };
+
+  const userOpHash = await entryPoint.read.getUserOpHash([userOp]);
+  const payloadHash = keccak256(
+    encodeAbiParameters(
+      [{ type: "bytes32" }, { type: "address" }, { type: "uint256" }],
+      [userOpHash, wallet.address, targetChainId]
+    )
+  );
+  const ownerSignature = await owner.signMessage({ message: { raw: payloadHash } });
+  userOp.signature = encodeAbiParameters(
+    [{ type: "address" }, { type: "bytes" }],
+    [zeroAddress(), ownerSignature]
+  );
+
+  return { userOp, userOpHash };
+}
+
 function zeroAddress() {
   return "0x0000000000000000000000000000000000000000";
 }
@@ -381,6 +417,36 @@ describe("AgentSmartWallet", async function () {
     assert.notEqual(await publicClient.getCode({ address: predictedWalletAddress }), "0x");
     assert.equal(await deployedWallet.read.isModuleInstalled([1n, validator.address, "0x"]), true);
     assert.equal(await walletFactory.read.wallets([owner.account.address]), getAddress(predictedWalletAddress));
+  });
+
+  it("allows a deployed wallet to install the validator through an owner-signed relayed user operation", async function () {
+    const { owner, agent, target, entryPoint, wallet, validator } = await deployFixture();
+    const latestBlock = await publicClient.getBlock();
+    const chainId = BigInt(await publicClient.getChainId());
+    const expiresAt = Number(latestBlock.timestamp + 3600n);
+
+    const callData = encodeFunctionData({
+      abi: wallet.abi,
+      functionName: "configureValidator",
+      args: [validator.address, "0x", sessionInitData(agent, target, "0x62f4b543", expiresAt, chainId)]
+    });
+
+    const { userOp, userOpHash } = await buildOwnerRelayUserOp({
+      entryPoint,
+      wallet,
+      owner,
+      callData,
+      nonce: 0n,
+      targetChainId: chainId
+    });
+
+    await viem.assertions.emitWithArgs(entryPoint.write.handleOps([[userOp]]), wallet, "UserOperationExecuted", [
+      userOpHash,
+      zeroAddress()
+    ]);
+
+    assert.equal(await wallet.read.isModuleInstalled([1n, validator.address, "0x"]), true);
+    assert.equal(await wallet.read.nonce(), 1n);
   });
 
   it("executes a sponsored user operation through the entry point and paymaster", async function () {

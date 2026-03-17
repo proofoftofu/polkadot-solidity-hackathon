@@ -40,7 +40,7 @@ contract AgentSmartWallet is IERC1271, IERC7579Execution, IERC7579AccountConfig,
     }
 
     modifier onlyOwner() {
-        if (msg.sender != owner) {
+        if (msg.sender != owner && msg.sender != address(this)) {
             revert NotOwner();
         }
         _;
@@ -68,6 +68,21 @@ contract AgentSmartWallet is IERC1271, IERC7579Execution, IERC7579AccountConfig,
 
     function installModule(uint256 moduleTypeId, address module, bytes calldata initData) external onlyOwner {
         _installModule(moduleTypeId, module, initData);
+    }
+
+    function configureValidator(address module, bytes calldata deInitData, bytes calldata initData) external onlyOwner {
+        if (!IERC7579Module(module).isModuleType(MODULE_TYPE_VALIDATOR)) {
+            revert ModuleTypeMismatch();
+        }
+
+        if (_installedModules[MODULE_TYPE_VALIDATOR][module]) {
+            IERC7579Module(module).onUninstall(deInitData);
+            _installedModules[MODULE_TYPE_VALIDATOR][module] = false;
+            _installedValidatorCount -= 1;
+            emit ModuleUninstalled(MODULE_TYPE_VALIDATOR, module);
+        }
+
+        _installModule(MODULE_TYPE_VALIDATOR, module, initData);
     }
 
     function bootstrapInstallModule(uint256 moduleTypeId, address module, bytes calldata initData) external {
@@ -156,7 +171,7 @@ contract AgentSmartWallet is IERC1271, IERC7579Execution, IERC7579AccountConfig,
 
         (address validator,) = abi.decode(userOp.signature, (address, bytes));
         if (validator == address(0)) {
-            if (!_validateBootstrapUserOp(userOp, userOpHash)) {
+            if (!_validateBootstrapUserOp(userOp, userOpHash) && !_validateOwnerUserOp(userOp, userOpHash)) {
                 revert UserOpValidationFailed();
             }
         } else {
@@ -247,6 +262,21 @@ contract AgentSmartWallet is IERC1271, IERC7579Execution, IERC7579AccountConfig,
         returns (bool)
     {
         if (_installedValidatorCount != 0 || nonce != 0 || userOp.initCode.length == 0) {
+            return false;
+        }
+
+        (, bytes memory ownerSignature) = abi.decode(userOp.signature, (address, bytes));
+        bytes32 digest =
+            keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", keccak256(abi.encode(userOpHash, address(this), block.chainid))));
+        return _recover(digest, ownerSignature) == owner;
+    }
+
+    function _validateOwnerUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash)
+        private
+        view
+        returns (bool)
+    {
+        if (userOp.initCode.length != 0) {
             return false;
         }
 
