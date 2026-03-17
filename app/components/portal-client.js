@@ -303,7 +303,7 @@ export default function PortalClient({ initialState }) {
             }
             throw error;
           }
-          appendLog("info", `[DEMO] Approval confirmed for ${request.id}. Session ${request.sessionId} is now active.`);
+          appendLog("info", `[DEMO] Approval confirmed for ${request.id}. Session ${request.sessionId} is ready for session approval.`);
           upsertDemoSession(request.userId, {
             ownerAddress: request.userId,
             requestId: request.id,
@@ -311,7 +311,7 @@ export default function PortalClient({ initialState }) {
             expiresAt: sessionPayload.session.expiresAt,
             status: "approved"
           });
-          appendSessionLog(request.sessionId, "info", "[DEMO] Session approved. Open this session to run the live demo transfer.");
+          appendSessionLog(request.sessionId, "info", "[DEMO] Session approved. Open this session to submit session approval.");
           setDemoContext((current) => current ? { ...current, sessionId: request.sessionId, status: "approved" } : current);
           await refresh();
           return;
@@ -400,12 +400,29 @@ export default function PortalClient({ initialState }) {
   };
 
   const deployWallet = () =>
-    submit("deploy-wallet", "Preparing wallet", async () => {
-      await requestJson("/api/wallet/deploy", {
+    submit("deploy-wallet", "Preparing wallet runtime", async () => {
+      const prepared = await requestJson("/api/wallet/deploy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ownerAddress })
       });
+
+      if (prepared.preparation?.dispatcherDeployTx) {
+        appendLog("info", "[WALLET] dispatcher deploy tx sent", {
+          href: blockscoutTxUrl(prepared.preparation.dispatcherDeployTx),
+          linkLabel: shortHash(prepared.preparation.dispatcherDeployTx, 8, 8)
+        });
+      }
+      if (prepared.preparation?.walletTopUpTx) {
+        appendLog("info", "[WALLET] wallet top-up tx sent", {
+          href: blockscoutTxUrl(prepared.preparation.walletTopUpTx),
+          linkLabel: shortHash(prepared.preparation.walletTopUpTx, 8, 8)
+        });
+      }
+      appendLog(
+        "info",
+        `[WALLET] Runtime ready for ${shortHash(prepared.wallet.predictedWalletAddress ?? prepared.wallet.deployedWalletAddress, 8, 8)}.`
+      );
     });
 
   const approve = (request) =>
@@ -508,7 +525,7 @@ export default function PortalClient({ initialState }) {
         throw new Error("Local session key is missing. Start a new demo request.");
       }
 
-      appendLog("info", `[DEMO] Preparing bootstrap for ${demoContext.sessionId}.`);
+      appendSessionLog(demoContext.sessionId, "info", "[DEMO] Preparing session approval.");
       const bootstrap = await requestJson("/agent/executions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -553,7 +570,7 @@ export default function PortalClient({ initialState }) {
       appendSessionLog(
         demoContext.sessionId,
         "info",
-        `[DEMO] Session ${demoContext.sessionId} installed on wallet.`,
+        `[DEMO] Session approval submitted. Session ${demoContext.sessionId} is now active.`,
         {
           href: blockscoutTxUrl(bootstrapSubmission?.submission?.txHash),
           linkLabel: shortHash(bootstrapSubmission?.submission?.txHash, 8, 8)
@@ -672,7 +689,7 @@ export default function PortalClient({ initialState }) {
 
               {stageSessions.length === 0 ? (
               <div className="absolute inset-x-4 bottom-4 rounded-[1.4rem] border border-dashed border-white/15 bg-black/20 px-5 py-4 text-sm text-slate-300 backdrop-blur">
-                  Waiting for approved delegates.
+                  Waiting for approved sessions.
                 </div>
               ) : null}
 
@@ -899,8 +916,12 @@ export default function PortalClient({ initialState }) {
               <div className="mt-4 rounded-[1.4rem] border border-white/10 bg-white/6 p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Demo transfer</p>
-                    <p className="mt-1 text-sm text-slate-300">Run the live transfer from this session view.</p>
+                    <p className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Session action</p>
+                    <p className="mt-1 text-sm text-slate-300">
+                      {selectedSession.status === "approved"
+                        ? "Submit session approval from this session view."
+                        : "Run the live transfer from this session view."}
+                    </p>
                   </div>
                   <button
                     className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-50 transition hover:-translate-y-0.5 hover:bg-emerald-300/16 disabled:opacity-50"
@@ -912,7 +933,9 @@ export default function PortalClient({ initialState }) {
                     onClick={runDemoTransfer}
                     type="button"
                   >
-                    {isRunning("run-demo-transfer") ? "Running transfer..." : "Run live transfer"}
+                    {isRunning("run-demo-transfer")
+                      ? (selectedSession.status === "approved" ? "Submitting approval..." : "Running transfer...")
+                      : (selectedSession.status === "approved" ? "Submit session approval" : "Run live transfer")}
                   </button>
                 </div>
 
@@ -974,7 +997,7 @@ export default function PortalClient({ initialState }) {
 
               <div className="p-5">
                 <div className="mb-5 rounded-[1.4rem] border border-white/10 bg-white/6 px-4 py-4 text-sm text-slate-300">
-                  Base wallet preparation lives here. Demo session creation and live transfer are driven from the main surface through the agent terminal.
+                  Base wallet preparation lives here. This predicts the wallet address, deploys the dispatcher if needed, and tops up the predicted wallet for later session approval and execution.
                 </div>
                 <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
                     <section className="rounded-[1.6rem] border border-white/10 bg-white/6 p-5">
@@ -1017,7 +1040,7 @@ export default function PortalClient({ initialState }) {
                         onClick={deployWallet}
                         type="button"
                       >
-                        {isRunning("deploy-wallet") ? "Preparing..." : "Prepare wallet"}
+                        {isRunning("deploy-wallet") ? "Preparing..." : "Prepare wallet runtime"}
                       </button>
                     </section>
                   </div>

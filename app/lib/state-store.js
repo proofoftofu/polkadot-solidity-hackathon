@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import os from "node:os";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +13,9 @@ const DEFAULT_STATE = {
 
 const LIB_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(LIB_DIR, "..");
-const STATE_PATH = path.join(APP_ROOT, "data", "app-state.json");
+const STATE_PATH = process.env.APP_STATE_PATH
+  ? path.resolve(process.env.APP_STATE_PATH)
+  : path.join(os.tmpdir(), "agent-wallet-app-state.json");
 
 function cloneDefaultState() {
   return JSON.parse(JSON.stringify(DEFAULT_STATE));

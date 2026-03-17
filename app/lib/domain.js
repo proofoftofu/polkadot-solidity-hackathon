@@ -734,6 +734,25 @@ export async function getWalletRecord(ownerAddress) {
   return ensureWallet(state, ownerAddress);
 }
 
+export async function prepareWalletForOwner(ownerAddress) {
+  const state = await readState();
+  const wallet = await ensureWallet(state, ownerAddress);
+  const config = await getContractsConfig();
+  const dispatcher = await ensureDispatcher(state, wallet, config.hubDeployment.contracts.crossChainDispatcher);
+
+  await writeState(toSerializable(state));
+
+  return {
+    wallet: toSerializable(wallet),
+    preparation: {
+      dispatcherAddress: dispatcher.dispatcherAddress ?? null,
+      dispatcherDeployTx: dispatcher.dispatcherDeployTx ?? null,
+      walletTopUpTx: dispatcher.walletTopUpTx ?? null,
+      dispatcherDerivedFundTx: dispatcher.dispatcherDerivedFundTx ?? null
+    }
+  };
+}
+
 export async function deployWalletForOwner(ownerAddress) {
   const state = await readState();
   const wallet = await ensureWallet(state, ownerAddress);

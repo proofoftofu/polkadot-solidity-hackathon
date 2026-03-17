@@ -5,7 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const DATA_PATH = path.join(APP_ROOT, "data", "app-state.json");
+const DATA_PATH = path.join(APP_ROOT, "tests", ".tmp", "app-state.json");
+process.env.APP_STATE_PATH = DATA_PATH;
 process.env.APP_DISABLE_DISPATCHER_RUNTIME = "true";
 
 async function resetStateFile() {
