@@ -440,6 +440,54 @@ async function ensureDispatcher(state, wallet, fallbackDispatcherAddress) {
   return prepared;
 }
 
+async function prepareSessionRuntime(state, session, request) {
+  const wallet = await ensureWallet(state, session.ownerAddress);
+  const config = await getContractsConfig();
+  const dispatcher = await ensureDispatcher(state, wallet, config.hubDeployment.contracts.crossChainDispatcher);
+  const maxAmount = BigInt(request.program.instructions[0].amount);
+  const beneficiary = request.program.instructions[3].accountId32;
+  const paraId = request.program.instructions[2].paraId;
+  const walletAddress = wallet.deployedWalletAddress ?? wallet.predictedWalletAddress;
+  const sessionInstallData = buildSessionInstallData(
+    session.sessionPublicKey,
+    dispatcher.dispatcherAddress,
+    beneficiary,
+    maxAmount,
+    paraId,
+    session.expiresAt
+  );
+
+  session.walletAddress = walletAddress;
+  session.walletStatus = wallet.status;
+  session.validatorAddress = config.hubDeployment.contracts.sessionKeyValidatorModule;
+  session.allowedTarget = dispatcher.dispatcherAddress;
+  session.allowedSelector = EXECUTE_PROGRAM_SELECTOR;
+  session.allowedEndpointKinds = [0];
+  session.allowedInstructionKinds = [0, 2, 3, 4];
+  session.allowedDestinationParaIds = [paraId];
+  session.allowedBeneficiaries = [beneficiary];
+  session.assetLimits = [{ assetId: PAS_ASSET_ID, maxAmount: maxAmount.toString() }];
+  session.bootstrap = {
+    mode: wallet.status === "deployed" ? "owner-install" : "userop-bootstrap",
+    initCode: wallet.status === "deployed" ? "0x" : buildInitCode(config, wallet.ownerAddress),
+    callData: wallet.status === "deployed"
+      ? buildOwnerInstallCallData(config, sessionInstallData)
+      : buildBootstrapCallData(config, sessionInstallData),
+    ownerInstallCallData: buildOwnerInstallCallData(config, sessionInstallData),
+    ownerUninstallCallData: wallet.validatorInstalled ? buildOwnerUninstallCallData(config) : "0x",
+    rotateExisting: Boolean(wallet.validatorInstalled),
+    sessionInstallData
+  };
+  session.executionDraft = buildExecutionDraft(config, request, walletAddress, dispatcher.dispatcherAddress);
+  session.updatedAt = nowIso();
+
+  return {
+    session,
+    wallet,
+    dispatcher
+  };
+}
+
 function toSerializable(state) {
   return JSON.parse(
     JSON.stringify(state, (_key, value) => (typeof value === "bigint" ? value.toString() : value))
@@ -551,12 +599,6 @@ export async function approveRequest(id, ownerAddress) {
     dispatcher: config.hubDeployment.contracts.crossChainDispatcher,
     validator: config.hubDeployment.contracts.sessionKeyValidatorModule
   });
-  const dispatcher = await ensureDispatcher(state, wallet, config.hubDeployment.contracts.crossChainDispatcher);
-  logApprovalStep("dispatcher-ready", {
-    dispatcherAddress: dispatcher.dispatcherAddress,
-    walletTopUpTx: dispatcher.walletTopUpTx ?? null,
-    dispatcherDerivedFundTx: dispatcher.dispatcherDerivedFundTx ?? null
-  });
   const expiresAt = new Date(Date.now() + DEFAULT_SESSION_DURATION_SECONDS * 1000).toISOString();
   const maxAmount = BigInt(request.program.instructions[0].amount);
   const beneficiary = request.program.instructions[3].accountId32;
@@ -567,31 +609,17 @@ export async function approveRequest(id, ownerAddress) {
     beneficiary,
     paraId
   });
-  const sessionInstallData = buildSessionInstallData(
-    request.sessionPublicKey,
-    dispatcher.dispatcherAddress,
-    beneficiary,
-    maxAmount,
-    paraId,
-    expiresAt
-  );
-  const walletAddress = wallet.deployedWalletAddress ?? wallet.predictedWalletAddress;
-  logApprovalStep("session-install-data-built", {
-    walletAddress,
-    sessionInstallDataBytes: sessionInstallData.length
-  });
-
   const session = {
     id: makeId("session"),
     requestId: request.id,
     ownerAddress: wallet.ownerAddress,
-    walletAddress,
+    walletAddress: wallet.deployedWalletAddress ?? wallet.predictedWalletAddress,
     walletStatus: wallet.status,
     agentId: APP_AGENT_ID,
     sessionPublicKey: request.sessionPublicKey,
     targetChain: request.targetChain,
     validatorAddress: config.hubDeployment.contracts.sessionKeyValidatorModule,
-    allowedTarget: dispatcher.dispatcherAddress,
+    allowedTarget: null,
     allowedSelector: EXECUTE_PROGRAM_SELECTOR,
     allowedEndpointKinds: [0],
     allowedInstructionKinds: [0, 2, 3, 4],
@@ -603,15 +631,13 @@ export async function approveRequest(id, ownerAddress) {
     bootstrap: {
       mode: wallet.status === "deployed" ? "owner-install" : "userop-bootstrap",
       initCode: wallet.status === "deployed" ? "0x" : buildInitCode(config, wallet.ownerAddress),
-      callData: wallet.status === "deployed"
-        ? buildOwnerInstallCallData(config, sessionInstallData)
-        : buildBootstrapCallData(config, sessionInstallData),
-      ownerInstallCallData: buildOwnerInstallCallData(config, sessionInstallData),
+      callData: null,
+      ownerInstallCallData: null,
       ownerUninstallCallData: wallet.validatorInstalled ? buildOwnerUninstallCallData(config) : "0x",
       rotateExisting: Boolean(wallet.validatorInstalled),
-      sessionInstallData
+      sessionInstallData: null
     },
-    executionDraft: buildExecutionDraft(config, request, walletAddress, dispatcher.dispatcherAddress),
+    executionDraft: null,
     approvedAt: nowIso(),
     updatedAt: nowIso()
   };
@@ -633,12 +659,44 @@ export async function approveRequest(id, ownerAddress) {
   return {
     ...sanitizeSession(session),
     approvalMeta: {
-      dispatcherTransactions: [
-        dispatcher.walletTopUpTx,
-        dispatcher.dispatcherDerivedFundTx
-      ].filter(Boolean)
+      dispatcherTransactions: []
     }
   };
+}
+
+export async function prepareSessionForExecution(sessionId) {
+  const state = await readState();
+  const session = state.sessions.find((entry) => entry.id === sessionId);
+  if (!session) {
+    throw new Error("Session not found");
+  }
+  const request = state.requests.find((entry) => entry.id === session.requestId);
+  if (!request) {
+    throw new Error("Request not found");
+  }
+
+  if (session.allowedTarget && session.bootstrap && session.executionDraft && session.walletAddress) {
+    return sanitizeSession(session);
+  }
+
+  logApprovalStep("prepare-session:start", {
+    sessionId,
+    requestId: session.requestId,
+    ownerAddress: session.ownerAddress
+  });
+  const startedAt = Date.now();
+  const prepared = await prepareSessionRuntime(state, session, request);
+  logApprovalStep("prepare-session:runtime-ready", {
+    sessionId,
+    dispatcherAddress: prepared.dispatcher.dispatcherAddress,
+    walletTopUpTx: prepared.dispatcher.walletTopUpTx ?? null
+  });
+  await writeState(toSerializable(state));
+  logApprovalStep("prepare-session:done", {
+    sessionId,
+    elapsedMs: Date.now() - startedAt
+  });
+  return sanitizeSession(session);
 }
 
 export async function listSessions() {
@@ -688,7 +746,9 @@ export async function deployWalletForOwner(ownerAddress) {
       session.status = "active";
       session.walletAddress = wallet.deployedWalletAddress ?? session.walletAddress;
       session.walletStatus = wallet.status;
-      session.executionDraft.walletAddress = session.walletAddress;
+      if (session.executionDraft) {
+        session.executionDraft.walletAddress = session.walletAddress;
+      }
       session.updatedAt = nowIso();
     }
   }

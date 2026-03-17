@@ -430,7 +430,7 @@ export default function PortalClient({ initialState }) {
           linkLabel: shortHash(txHash, 8, 8)
         });
       }
-      await submitBootstrapApproval(approved.session);
+      appendLog("info", `[APPROVAL] Session ${approved.session.id} approved.`);
     });
 
   const reject = (id) =>
@@ -520,27 +520,43 @@ export default function PortalClient({ initialState }) {
         })
       });
 
+      let bootstrapSubmission;
       if (bootstrap.prepared.kind === "bootstrap") {
-        throw new Error("This demo owner requires an owner signature path that is not exposed in the frontend");
+        const ownerWallet = await ensureLocalOwnerWallet();
+        if (ownerWallet.address.toLowerCase() !== demoContext.ownerAddress.toLowerCase()) {
+          throw new Error("Local owner EOA does not match the approved request owner");
+        }
+        const ownerSignature = await signDemoPayload(ownerWallet.privateKey, bootstrap.prepared.payloadHash);
+        bootstrapSubmission = await requestJson("/agent/executions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            requestId: demoContext.requestId,
+            sessionId: demoContext.sessionId,
+            live: true,
+            submit: "bootstrap",
+            ownerSignature
+          })
+        });
+      } else {
+        bootstrapSubmission = await requestJson("/agent/executions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            requestId: demoContext.requestId,
+            sessionId: demoContext.sessionId,
+            live: true,
+            submit: "bootstrap"
+          })
+        });
       }
-
-      const bootstrapSubmission = await requestJson("/agent/executions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requestId: demoContext.requestId,
-          sessionId: demoContext.sessionId,
-          live: true,
-          submit: "bootstrap"
-        })
-      });
       appendSessionLog(
         demoContext.sessionId,
         "info",
         `[DEMO] Session ${demoContext.sessionId} installed on wallet.`,
         {
-          href: blockscoutTxUrl(bootstrapSubmission.submission?.txHash),
-          linkLabel: shortHash(bootstrapSubmission.submission?.txHash, 8, 8)
+          href: blockscoutTxUrl(bootstrapSubmission?.submission?.txHash),
+          linkLabel: shortHash(bootstrapSubmission?.submission?.txHash, 8, 8)
         }
       );
 

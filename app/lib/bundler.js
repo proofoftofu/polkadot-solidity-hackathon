@@ -13,7 +13,13 @@ import { privateKeyToAccount } from "viem/accounts";
 import { APP_AGENT_ID, POLKADOT_HUB_CHAIN_ID, ZERO_ADDRESS } from "./constants.js";
 import { getContractsConfig } from "./contracts.js";
 import { getRequiredEnv } from "./server-env.js";
-import { getSessionRecord, getWalletRecord, markExecutionSubmitted, markSessionSubmitted } from "./domain.js";
+import {
+  getSessionRecord,
+  getWalletRecord,
+  markExecutionSubmitted,
+  markSessionSubmitted,
+  prepareSessionForExecution
+} from "./domain.js";
 
 function requirePrivateKey() {
   const key = getRequiredEnv("PRIVATE_KEY");
@@ -156,7 +162,7 @@ async function sendPackedUserOperation(userOp) {
 }
 
 export async function buildBootstrapSigningRequest(sessionId) {
-  const session = await getSessionRecord(sessionId);
+  const session = await prepareSessionForExecution(sessionId);
   const wallet = await getWalletRecord(session.ownerAddress);
   const entryPoint = await getEntryPointContract();
   const sender = session.walletAddress ?? wallet.predictedWalletAddress;
