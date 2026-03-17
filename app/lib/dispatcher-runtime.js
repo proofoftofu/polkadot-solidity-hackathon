@@ -1,4 +1,6 @@
 import { readFile } from "node:fs/promises";
+import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 
 import { ApiPromise, WsProvider } from "@polkadot/api";
@@ -21,6 +23,7 @@ import { getEnv, getRequiredEnv } from "./server-env.js";
 
 const CONTRACTS_ROOT = path.join(process.cwd(), "..", "contracts");
 const ARTIFACTS_ROOT = path.join(CONTRACTS_ROOT, "artifacts", "contracts");
+const CONTRACTS_SOURCE_ROOT = path.join(CONTRACTS_ROOT, "contracts");
 const DEFAULT_HUB_WS_URLS = [
   "wss://asset-hub-paseo-rpc.n.dwellir.com",
   "wss://testnet-passet-hub.polkadot.io",
@@ -29,12 +32,83 @@ const DEFAULT_HUB_WS_URLS = [
 const SUBSTRATE_WS_RETRIES = Number.parseInt(getEnv("SUBSTRATE_WS_RETRIES", "3"), 10);
 const SUBSTRATE_WS_RETRY_DELAY_MS = Number.parseInt(getEnv("SUBSTRATE_WS_RETRY_DELAY_MS", "1500"), 10);
 const SUBSTRATE_WS_CONNECT_TIMEOUT_MS = Number.parseInt(getEnv("SUBSTRATE_WS_CONNECT_TIMEOUT_MS", "12000"), 10);
+const contractsRequire = createRequire(path.join(CONTRACTS_ROOT, "package.json"));
+const solc = contractsRequire("solc");
+let compiledContractsPromise;
 
 function evmToSubstrateAccount(address) {
   return u8aToHex(blake2AsU8a(u8aConcat(stringToU8a("evm:"), hexToU8a(address)), 256));
 }
 
+async function getSoliditySources(dir, prefix = "contracts") {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  const sources = {};
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+    const relativePath = path.join(prefix, entry.name);
+    if (entry.isDirectory()) {
+      Object.assign(sources, await getSoliditySources(fullPath, relativePath));
+      continue;
+    }
+    if (!entry.name.endsWith(".sol")) {
+      continue;
+    }
+    sources[relativePath] = {
+      content: await fs.readFile(fullPath, "utf8")
+    };
+  }
+
+  return sources;
+}
+
+async function compileContracts() {
+  const sources = await getSoliditySources(CONTRACTS_SOURCE_ROOT);
+  const input = {
+    language: "Solidity",
+    sources,
+    settings: {
+      optimizer: {
+        enabled: true,
+        runs: 200
+      },
+      outputSelection: {
+        "*": {
+          "*": ["abi", "evm.bytecode.object"]
+        }
+      }
+    }
+  };
+  const output = JSON.parse(solc.compile(JSON.stringify(input)));
+  if (output.errors) {
+    const errors = output.errors.filter((entry) => entry.severity === "error");
+    if (errors.length > 0) {
+      throw new Error(errors.map((entry) => entry.formattedMessage).join("\n\n"));
+    }
+  }
+  return output.contracts;
+}
+
 async function readArtifact(contractFile, contractName) {
+  try {
+    compiledContractsPromise ??= compileContracts();
+    const contracts = await compiledContractsPromise;
+    const sourcePath = path.join("contracts", contractFile);
+    const contract = contracts[sourcePath]?.[contractName];
+    if (contract) {
+      return {
+        abi: contract.abi,
+        bytecode: `0x${contract.evm.bytecode.object}`
+      };
+    }
+  } catch (error) {
+    console.warn("[dispatcher-runtime] falling back to bundled artifact", {
+      contractFile,
+      contractName,
+      error: error?.message
+    });
+  }
+
   const artifactPath = path.join(ARTIFACTS_ROOT, contractFile, `${contractName}.json`);
   return JSON.parse(await readFile(artifactPath, "utf8"));
 }

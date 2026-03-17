@@ -725,7 +725,7 @@ export async function prepareSessionForExecution(sessionId) {
     ownerAddress: session.ownerAddress
   });
   const startedAt = Date.now();
-  const prepared = await prepareSessionRuntime(state, session, request, { fundDerived: true });
+  const prepared = await prepareSessionRuntime(state, session, request, { fundDerived: false });
   logApprovalStep("prepare-session:runtime-ready", {
     sessionId,
     dispatcherAddress: prepared.dispatcher.dispatcherAddress,

@@ -734,6 +734,7 @@ export default function PortalClient({ initialState }) {
               className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-50 transition hover:-translate-y-0.5 hover:bg-emerald-300/16 disabled:opacity-50"
               disabled={isRunning("initiate-demo")}
               onClick={initiateDemoAgent}
+              data-testid="initiate-demo-agent"
               type="button"
             >
               {isRunning("initiate-demo") ? "Initiating..." : "Initiate demo agent"}
@@ -781,6 +782,7 @@ export default function PortalClient({ initialState }) {
                 <button
                   key={session.id}
                   className="absolute w-[172px] touch-none rounded-[1.4rem] border border-white/12 bg-white/9 p-4 text-left shadow-[0_16px_56px_rgba(2,8,18,0.36)] backdrop-blur-xl transition hover:border-cyan-300/30 hover:bg-white/12"
+                  data-testid={`session-chip-${session.id}`}
                   onPointerCancel={(event) => endSessionDrag(event, session)}
                   onPointerDown={(event) => startSessionDrag(event, session, index)}
                   onPointerMove={updateSessionDrag}
@@ -873,6 +875,7 @@ export default function PortalClient({ initialState }) {
                       className="rounded-full border border-cyan-300/30 bg-cyan-300/14 px-4 py-3 text-sm font-semibold text-cyan-50 transition hover:-translate-y-0.5 hover:bg-cyan-300/18 disabled:opacity-50"
                       disabled={isRunning(`approve-${activeRequest.id}`)}
                       onClick={() => approve(activeRequest)}
+                      data-testid={`approve-session-${activeRequest.id}`}
                       type="button"
                     >
                       {isRunning(`approve-${activeRequest.id}`) ? "Approving..." : "Approve session"}
@@ -920,6 +923,7 @@ export default function PortalClient({ initialState }) {
           <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/55 px-4 py-6" onClick={() => setSessionModalId(null)} role="presentation">
             <div
               className="max-h-[85vh] w-full max-w-3xl overflow-auto rounded-[1.9rem] border border-white/12 bg-[linear-gradient(180deg,rgba(11,23,34,0.92),rgba(8,17,27,0.96))] p-6 shadow-[0_28px_100px_rgba(0,0,0,0.42)] backdrop-blur-2xl"
+              data-testid={`session-modal-${selectedSession.id}`}
               onClick={(event) => event.stopPropagation()}
             >
               <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -1008,6 +1012,7 @@ export default function PortalClient({ initialState }) {
                       || !["approved", "active", "submitted"].includes(selectedSession.status)
                     }
                     onClick={() => runDemoTransfer(selectedSession)}
+                    data-testid={`run-live-transfer-${selectedSession.id}`}
                     type="button"
                   >
                     {isRunning(`run-demo-transfer-${selectedSession.id}`)
