@@ -19,6 +19,8 @@ const CHIP_POSITIONS = [
   { x: 72, y: 336 },
   { x: 500, y: 360 }
 ];
+const CHIP_WIDTH = 172;
+const CHIP_HEIGHT = 140;
 
 async function requestJson(url, options) {
   const response = await fetch(url, options);
@@ -224,6 +226,27 @@ function lineTone(tone) {
 
 function blockscoutTxUrl(txHash) {
   return `https://blockscout-testnet.polkadot.io/tx/${txHash}`;
+}
+
+function hashSessionId(sessionId) {
+  return Array.from(sessionId).reduce((total, char, index) => (
+    (total + (char.charCodeAt(0) * (index + 17))) % 9973
+  ), 0);
+}
+
+function buildDefaultSessionPosition(sessionId, index) {
+  const seeded = CHIP_POSITIONS[index];
+  if (seeded) {
+    return seeded;
+  }
+
+  const hash = hashSessionId(sessionId);
+  const orbit = Math.floor(hash / 7) % 3;
+  const slot = hash % 6;
+  return {
+    x: 36 + (slot * 86) + (orbit * 18),
+    y: 44 + (orbit * 124) + ((slot % 2) * 46)
+  };
 }
 
 export default function PortalClient({ initialState }) {
@@ -656,7 +679,7 @@ export default function PortalClient({ initialState }) {
       appendLog("info", `[SESSION] ${session.id} removed from the console.`);
     });
 
-  const getSessionPosition = (session, index) => sessionPositions[session.id] ?? (CHIP_POSITIONS[index] ?? CHIP_POSITIONS[0]);
+  const getSessionPosition = (session, index) => sessionPositions[session.id] ?? buildDefaultSessionPosition(session.id, index);
 
   const startSessionDrag = (event, session, index) => {
     if (!stageRef.current) {
@@ -688,8 +711,8 @@ export default function PortalClient({ initialState }) {
       drag.moved = true;
     }
     persistSessionPosition(drag.sessionId, {
-      x: Math.max(12, Math.min(drag.originX + deltaX, drag.stageRect.width - 184)),
-      y: Math.max(12, Math.min(drag.originY + deltaY, drag.stageRect.height - 140))
+      x: Math.max(12, Math.min(drag.originX + deltaX, drag.stageRect.width - CHIP_WIDTH - 12)),
+      y: Math.max(12, Math.min(drag.originY + deltaY, drag.stageRect.height - CHIP_HEIGHT - 12))
     });
   };
 
@@ -787,7 +810,10 @@ export default function PortalClient({ initialState }) {
                   onPointerDown={(event) => startSessionDrag(event, session, index)}
                   onPointerMove={updateSessionDrag}
                   onPointerUp={(event) => endSessionDrag(event, session)}
-                  style={getSessionPosition(session, index)}
+                  style={{
+                    left: `${getSessionPosition(session, index).x}px`,
+                    top: `${getSessionPosition(session, index).y}px`
+                  }}
                   type="button"
                 >
                   <div className="flex items-center justify-between gap-2">
