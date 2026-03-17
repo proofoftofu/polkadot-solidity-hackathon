@@ -518,10 +518,28 @@ export default function PortalClient({ initialState }) {
           linkLabel: shortHash(prepared.preparation.walletTopUpTx, 8, 8)
         });
       }
+      if (prepared.preparation?.dispatcherTopUpTx) {
+        appendLog("info", "[WALLET] dispatcher top-up tx sent", {
+          href: blockscoutTxUrl(prepared.preparation.dispatcherTopUpTx),
+          linkLabel: shortHash(prepared.preparation.dispatcherTopUpTx, 8, 8)
+        });
+      }
+      if (prepared.preparation?.dispatcherDerivedFundTx) {
+        appendLog("info", "[WALLET] dispatcher-derived top-up tx sent", {
+          href: blockscoutTxUrl(prepared.preparation.dispatcherDerivedFundTx),
+          linkLabel: shortHash(prepared.preparation.dispatcherDerivedFundTx, 8, 8)
+        });
+      }
       appendLog(
         "info",
-        `[WALLET] Runtime ready for ${shortHash(prepared.wallet.predictedWalletAddress ?? prepared.wallet.deployedWalletAddress, 8, 8)}.`
+        `[WALLET] Transfer preflight ready for ${shortHash(prepared.wallet.predictedWalletAddress ?? prepared.wallet.deployedWalletAddress, 8, 8)}.`
       );
+      if (prepared.preparation?.dispatcherDerivedAccountId32) {
+        appendLog(
+          "info",
+          `[WALLET] Dispatcher origin ${shortHash(prepared.preparation.dispatcherDerivedAccountId32, 8, 8)} balance ${prepared.preparation.dispatcherDerivedBalance ?? "ready"}.`
+        );
+      }
     });
 
   const approve = (request) =>
@@ -1156,7 +1174,7 @@ export default function PortalClient({ initialState }) {
 
               <div className="p-5">
                 <div className="mb-5 rounded-[1.4rem] border border-white/10 bg-white/6 px-4 py-4 text-sm text-slate-300">
-                  Base wallet preparation lives here. This predicts the wallet address, deploys the dispatcher if needed, and tops up the predicted wallet for later session approval and execution.
+                  Base wallet preparation lives here. This predicts the wallet address, deploys the dispatcher if needed, and runs the transfer preflight top-ups required before live XCM execution.
                 </div>
                 <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
                     <section className="rounded-[1.6rem] border border-white/10 bg-white/6 p-5">
@@ -1199,7 +1217,7 @@ export default function PortalClient({ initialState }) {
                         onClick={deployWallet}
                         type="button"
                       >
-                        {isRunning("deploy-wallet") ? "Preparing..." : "Prepare wallet runtime"}
+                        {isRunning("deploy-wallet") ? "Preparing..." : "Prepare wallet + transfer preflight"}
                       </button>
                     </section>
                   </div>

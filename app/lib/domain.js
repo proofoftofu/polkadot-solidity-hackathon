@@ -800,7 +800,12 @@ export async function prepareWalletForOwner(ownerAddress) {
   const state = await readState();
   const wallet = await ensureWallet(state, ownerAddress);
   const config = await getContractsConfig();
-  const dispatcher = await ensureDispatcher(state, wallet, config.hubDeployment.contracts.crossChainDispatcher);
+  const dispatcher = await ensureDispatcher(
+    state,
+    wallet,
+    config.hubDeployment.contracts.crossChainDispatcher,
+    { fundDerived: true }
+  );
 
   await writeState(toSerializable(state));
 
@@ -810,6 +815,9 @@ export async function prepareWalletForOwner(ownerAddress) {
       dispatcherAddress: dispatcher.dispatcherAddress ?? null,
       dispatcherDeployTx: dispatcher.dispatcherDeployTx ?? null,
       walletTopUpTx: dispatcher.walletTopUpTx ?? null,
+      dispatcherTopUpTx: dispatcher.dispatcherTopUpTx ?? null,
+      dispatcherDerivedAccountId32: dispatcher.dispatcherDerivedAccountId32 ?? null,
+      dispatcherDerivedBalance: dispatcher.dispatcherDerivedBalance ?? null,
       dispatcherDerivedFundTx: dispatcher.dispatcherDerivedFundTx ?? null
     }
   };
