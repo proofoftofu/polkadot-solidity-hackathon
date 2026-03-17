@@ -240,7 +240,7 @@ export async function buildBootstrapUserOp(sessionId, ownerSignatureInput) {
 }
 
 export async function buildSessionSigningRequest(sessionId) {
-  const session = await getSessionRecord(sessionId);
+  const session = await prepareSessionForExecution(sessionId);
   if (session.status !== "active") {
     throw new Error("Session must be active before building a session userOp");
   }

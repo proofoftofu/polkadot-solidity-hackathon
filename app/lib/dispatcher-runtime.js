@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 
-import { getRequiredEnv } from "./server-env.js";
+import { getEnv, getRequiredEnv } from "./server-env.js";
 
 const CONTRACTS_CWD = path.join(process.cwd(), "..", "contracts");
 
@@ -21,8 +21,9 @@ function parseOutput(stdout) {
   return result;
 }
 
-export async function prepareWalletDispatcher(walletAddress, existingDispatcherAddress) {
+export async function prepareWalletDispatcher(walletAddress, existingDispatcherAddress, options = {}) {
   const operatorPrivateKey = getRequiredEnv("PRIVATE_KEY");
+  const rpcUrl = getEnv("POLKADOT_RPC_URL");
   console.log("[dispatcher-runtime] prepare", { walletAddress, existingDispatcherAddress });
   const startedAt = Date.now();
 
@@ -32,7 +33,9 @@ export async function prepareWalletDispatcher(walletAddress, existingDispatcherA
       env: {
         ...process.env,
         PRIVATE_KEY: operatorPrivateKey,
+        ...(rpcUrl ? { POLKADOT_RPC_URL: rpcUrl } : {}),
         WALLET_ADDRESS: walletAddress,
+        ...(options.fundDerived ? { FUND_DISPATCHER_DERIVED: "true" } : {}),
         ...(existingDispatcherAddress ? { DISPATCHER_ADDRESS: existingDispatcherAddress } : {})
       },
       stdio: ["ignore", "pipe", "pipe"]

@@ -146,7 +146,12 @@ async function ensureEvmBalance(sender, recipient, minBalance) {
 
 function isAlreadyImportedError(error) {
   const message = `${error?.shortMessage ?? ""}\n${error?.details ?? ""}\n${error?.message ?? ""}`.toLowerCase();
-  return message.includes("transaction already imported") || message.includes("nonce provided for the transaction is lower");
+  return (
+    message.includes("transaction already imported") ||
+    message.includes("nonce provided for the transaction is lower") ||
+    message.includes("priority is too low") ||
+    message.includes("replacement transaction underpriced")
+  );
 }
 
 async function waitForContractCode(publicClient, address, attempts = 18, delayMs = 5000) {

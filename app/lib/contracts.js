@@ -1,6 +1,15 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { createPublicClient, getContract, http } from "viem";
+import {
+  concatHex,
+  createPublicClient,
+  encodeAbiParameters,
+  getAddress,
+  getContract,
+  http,
+  keccak256,
+  slice
+} from "viem";
 
 import { POLKADOT_HUB_CHAIN_ID } from "./constants.js";
 import { getEnv } from "./server-env.js";
@@ -8,8 +17,10 @@ import { getEnv } from "./server-env.js";
 const CONTRACTS_ROOT = path.join(process.cwd(), "..", "contracts");
 const DEPLOYMENTS_ROOT = path.join(CONTRACTS_ROOT, "deployments");
 const ABI_ROOT = path.join(DEPLOYMENTS_ROOT, "abi");
+const ARTIFACTS_ROOT = path.join(CONTRACTS_ROOT, "artifacts", "contracts");
 
 let cache;
+let walletArtifactCache;
 const DEFAULT_POLKADOT_RPC_URL = "https://eth-rpc-testnet.polkadot.io";
 
 const CURRENT_WALLET_FACTORY_ABI = [
@@ -156,6 +167,15 @@ async function readJson(filePath) {
   return JSON.parse(contents);
 }
 
+async function getWalletArtifact() {
+  if (!walletArtifactCache) {
+    walletArtifactCache = readJson(
+      path.join(ARTIFACTS_ROOT, "AgentSmartWallet.sol", "AgentSmartWallet.json")
+    );
+  }
+  return walletArtifactCache;
+}
+
 export async function getContractsConfig() {
   if (!cache) {
     const [addresses, hubDeployment, walletFactoryArtifact, walletArtifact, validatorArtifact] =
@@ -210,4 +230,39 @@ export async function getWalletFactoryContract() {
     abi: config.abis.walletFactory,
     client: publicClient
   });
+}
+
+export async function predictWalletAddressForOwner(ownerAddress) {
+  const config = await getContractsConfig();
+  const owner = getAddress(ownerAddress);
+
+  try {
+    const client = await getReadClient();
+    return await client.readContract({
+      address: config.hubDeployment.contracts.walletFactory,
+      abi: config.abis.walletFactory,
+      functionName: "predictWallet",
+      args: [owner]
+    });
+  } catch (error) {
+    console.warn("[contracts] predictWallet RPC failed, using local CREATE2 fallback", {
+      ownerAddress: owner,
+      message: error?.shortMessage ?? error?.message ?? String(error)
+    });
+  }
+
+  const artifact = await getWalletArtifact();
+  const constructorArgs = encodeAbiParameters(
+    [{ type: "address" }, { type: "address" }],
+    [owner, config.hubDeployment.contracts.entryPoint]
+  );
+  const initCode = concatHex([artifact.bytecode, constructorArgs]);
+  const salt = keccak256(encodeAbiParameters([{ type: "address" }], [owner]));
+  const create2Input = concatHex([
+    "0xff",
+    config.hubDeployment.contracts.walletFactory,
+    salt,
+    keccak256(initCode)
+  ]);
+  return getAddress(slice(keccak256(create2Input), 12));
 }

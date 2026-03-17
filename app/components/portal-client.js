@@ -572,26 +572,28 @@ export default function PortalClient({ initialState }) {
       if (!session?.requestId || !session?.id) {
         throw new Error("No approved session is selected");
       }
-      const demoSession = getReusableDemoSession(session.ownerAddress);
+      const latestSessionPayload = await requestJson(`/agent/sessions/${session.id}`);
+      const latestSession = latestSessionPayload.session;
+      const demoSession = getReusableDemoSession(latestSession.ownerAddress);
       if (!demoSession?.sessionPrivateKey) {
         throw new Error("Local session key is missing for this owner. Start a new demo request.");
       }
-      if (demoSession.sessionPublicKey.toLowerCase() !== session.sessionPublicKey.toLowerCase()) {
+      if (demoSession.sessionPublicKey.toLowerCase() !== latestSession.sessionPublicKey.toLowerCase()) {
         throw new Error("The browser's saved session key does not match this session. Start a new demo request for this owner.");
       }
 
-      if (session.status === "approved") {
-        appendSessionLog(session.id, "info", "[DEMO] Preparing transfer session.");
-        await submitBootstrapApproval(session);
-        appendSessionLog(session.id, "info", "[DEMO] Transfer session is ready.");
+      if (latestSession.status === "approved") {
+        appendSessionLog(session.id, "info", "[DEMO] Preparing transfer runtime.");
+        await submitBootstrapApproval(latestSession);
+        appendSessionLog(session.id, "info", "[DEMO] Transfer runtime is ready.");
       }
 
       const preparedSession = await requestJson("/agent/executions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          requestId: session.requestId,
-          sessionId: session.id,
+          requestId: latestSession.requestId,
+          sessionId: latestSession.id,
           live: true,
           prepare: "session"
         })
@@ -607,8 +609,8 @@ export default function PortalClient({ initialState }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          requestId: session.requestId,
-          sessionId: session.id,
+          requestId: latestSession.requestId,
+          sessionId: latestSession.id,
           live: true,
           submit: "session",
           signerAddress: demoSession.sessionPublicKey,

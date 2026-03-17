@@ -25,13 +25,14 @@ import {
   ZERO_ADDRESS,
   ZERO_BYTES32
 } from "./constants.js";
-import { getContractsConfig, getReadClient, getWalletFactoryContract } from "./contracts.js";
+import { getContractsConfig, getReadClient, predictWalletAddressForOwner } from "./contracts.js";
 import { prepareWalletDispatcher } from "./dispatcher-runtime.js";
 import { getEnv } from "./server-env.js";
 import { makeId, readState, writeState } from "./state-store.js";
 
 const ENABLE_CHAIN_READS = process.env.APP_ENABLE_CHAIN_READS !== "false";
 const ENABLE_CHAIN_SUBMISSION = process.env.APP_ENABLE_CHAIN_SUBMISSION === "true";
+const CHAIN_READ_ATTEMPTS = 3;
 
 function nowIso() {
   return new Date().toISOString();
@@ -43,6 +44,22 @@ function logApprovalStep(step, details) {
     return;
   }
   console.log(`[domain/approve] ${step}`, details);
+}
+
+async function retryChainRead(label, operation, attempts = CHAIN_READ_ATTEMPTS) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      console.warn(`[domain/chain-read] ${label} failed`, {
+        attempt,
+        message: error?.shortMessage ?? error?.message ?? String(error)
+      });
+    }
+  }
+  throw lastError;
 }
 
 function resolveOwnerAddress(ownerAddress) {
@@ -288,9 +305,12 @@ async function predictWalletAddress(ownerAddress) {
   }
 
   try {
-    const contract = await getWalletFactoryContract();
-    return await contract.read.predictWallet([ownerAddress]);
-  } catch {
+    return await retryChainRead("predictWallet", async () => predictWalletAddressForOwner(ownerAddress));
+  } catch (error) {
+    console.warn("[domain/chain-read] predictWallet exhausted", {
+      ownerAddress,
+      message: error?.shortMessage ?? error?.message ?? String(error)
+    });
     return null;
   }
 }
@@ -301,32 +321,38 @@ async function readLiveWalletState(config, walletAddress) {
   }
 
   try {
-    const client = await getReadClient();
-    const code = await client.getCode({ address: walletAddress });
-    if (!code || code === "0x") {
-      return { deployed: false, nonce: 0n, validatorInstalled: false };
-    }
+    return await retryChainRead("readLiveWalletState", async () => {
+      const client = await getReadClient();
+      const code = await client.getCode({ address: walletAddress });
+      if (!code || code === "0x") {
+        return { deployed: false, nonce: 0n, validatorInstalled: false };
+      }
 
-    const [nonce, sessionState] = await Promise.all([
-      client.readContract({
-        address: walletAddress,
-        abi: config.abis.wallet,
-        functionName: "nonce"
-      }),
-      client.readContract({
-        address: config.hubDeployment.contracts.sessionKeyValidatorModule,
-        abi: config.abis.sessionKeyValidatorModule,
-        functionName: "getSessionState",
-        args: [walletAddress]
-      })
-    ]);
+      const [nonce, sessionState] = await Promise.all([
+        client.readContract({
+          address: walletAddress,
+          abi: config.abis.wallet,
+          functionName: "nonce"
+        }),
+        client.readContract({
+          address: config.hubDeployment.contracts.sessionKeyValidatorModule,
+          abi: config.abis.sessionKeyValidatorModule,
+          functionName: "getSessionState",
+          args: [walletAddress]
+        })
+      ]);
 
-    return {
-      deployed: true,
-      nonce,
-      validatorInstalled: Boolean(sessionState[4])
-    };
-  } catch {
+      return {
+        deployed: true,
+        nonce,
+        validatorInstalled: Boolean(sessionState[4])
+      };
+    });
+  } catch (error) {
+    console.warn("[domain/chain-read] readLiveWalletState exhausted", {
+      walletAddress,
+      message: error?.shortMessage ?? error?.message ?? String(error)
+    });
     return null;
   }
 }
@@ -400,7 +426,7 @@ async function ensureWallet(state, ownerAddress) {
   return wallet;
 }
 
-async function ensureDispatcher(state, wallet, fallbackDispatcherAddress) {
+async function ensureDispatcher(state, wallet, fallbackDispatcherAddress, options = {}) {
   logApprovalStep("ensureDispatcher:start", {
     walletAddress: wallet.predictedWalletAddress,
     existingDispatcherAddress: wallet.dispatcherAddress ?? null,
@@ -416,10 +442,12 @@ async function ensureDispatcher(state, wallet, fallbackDispatcherAddress) {
     return { dispatcherAddress: wallet.dispatcherAddress };
   }
 
-  if (wallet.dispatcherAddress && wallet.dispatcherPreparedAt) {
+  const requiresDerivedFunding = options.fundDerived === true;
+  if (wallet.dispatcherAddress && wallet.dispatcherPreparedAt && (!requiresDerivedFunding || wallet.dispatcherDerivedPreparedAt)) {
     logApprovalStep("ensureDispatcher:cached", {
       dispatcherAddress: wallet.dispatcherAddress,
-      dispatcherPreparedAt: wallet.dispatcherPreparedAt
+      dispatcherPreparedAt: wallet.dispatcherPreparedAt,
+      dispatcherDerivedPreparedAt: wallet.dispatcherDerivedPreparedAt ?? null
     });
     return { dispatcherAddress: wallet.dispatcherAddress };
   }
@@ -428,9 +456,16 @@ async function ensureDispatcher(state, wallet, fallbackDispatcherAddress) {
     throw new Error("Wallet prediction is required before preparing the dispatcher");
   }
 
-  const prepared = await prepareWalletDispatcher(wallet.predictedWalletAddress, wallet.dispatcherAddress);
+  const prepared = await prepareWalletDispatcher(wallet.predictedWalletAddress, wallet.dispatcherAddress, {
+    fundDerived: requiresDerivedFunding
+  });
   wallet.dispatcherAddress = prepared.dispatcherAddress;
   wallet.dispatcherPreparedAt = nowIso();
+  if (requiresDerivedFunding && prepared.dispatcherDerivedFundTx) {
+    wallet.dispatcherDerivedPreparedAt = nowIso();
+  } else if (requiresDerivedFunding && prepared.dispatcherDerivedBalance) {
+    wallet.dispatcherDerivedPreparedAt = nowIso();
+  }
   wallet.updatedAt = nowIso();
   logApprovalStep("ensureDispatcher:done", {
     dispatcherAddress: prepared.dispatcherAddress,
@@ -440,10 +475,15 @@ async function ensureDispatcher(state, wallet, fallbackDispatcherAddress) {
   return prepared;
 }
 
-async function prepareSessionRuntime(state, session, request) {
+async function prepareSessionRuntime(state, session, request, options = {}) {
   const wallet = await ensureWallet(state, session.ownerAddress);
   const config = await getContractsConfig();
-  const dispatcher = await ensureDispatcher(state, wallet, config.hubDeployment.contracts.crossChainDispatcher);
+  const dispatcher = await ensureDispatcher(
+    state,
+    wallet,
+    config.hubDeployment.contracts.crossChainDispatcher,
+    options
+  );
   const maxAmount = BigInt(request.program.instructions[0].amount);
   const beneficiary = request.program.instructions[3].accountId32;
   const paraId = request.program.instructions[2].paraId;
@@ -685,7 +725,7 @@ export async function prepareSessionForExecution(sessionId) {
     ownerAddress: session.ownerAddress
   });
   const startedAt = Date.now();
-  const prepared = await prepareSessionRuntime(state, session, request);
+  const prepared = await prepareSessionRuntime(state, session, request, { fundDerived: true });
   logApprovalStep("prepare-session:runtime-ready", {
     sessionId,
     dispatcherAddress: prepared.dispatcher.dispatcherAddress,
