@@ -304,7 +304,7 @@ export async function buildSessionUserOp(sessionId, sessionSignatureInput, signe
 export async function sendUserOperation(input) {
   const submission = await sendPackedUserOperation(input.userOp ?? input);
 
-  if (input.kind === "bootstrap" && input.sessionId) {
+  if ((input.kind === "bootstrap" || input.kind === "owner-install") && input.sessionId) {
     await markSessionSubmitted(input.sessionId, {
       bootstrapTxHash: submission.txHash,
       bootstrapUserOpHash: submission.userOpHash,

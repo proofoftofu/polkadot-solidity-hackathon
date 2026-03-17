@@ -241,7 +241,7 @@ export default function PortalClient({ initialState }) {
   const [sessionLogs, setSessionLogs] = useState({});
   const [demoContext, setDemoContext] = useState(null);
   const [sessionPositions, setSessionPositions] = useState({});
-  const seenEventKeysRef = useRef(new Set());
+  const seenEventKeysRef = useRef(new Set(buildStateEventEntries(initialState).map((entry) => entry.key)));
   const stageRef = useRef(null);
   const dragStateRef = useRef(null);
 
@@ -362,7 +362,7 @@ export default function PortalClient({ initialState }) {
             }
             throw error;
           }
-          appendLog("info", `[DEMO] Approval confirmed for ${request.id}. Session ${request.sessionId} is ready for session approval.`);
+          appendLog("info", `[DEMO] Approval confirmed for ${request.id}. Session ${request.sessionId} is ready for transfer.`);
           upsertDemoSession(request.userId, {
             ownerAddress: request.userId,
             requestId: request.id,
@@ -370,7 +370,7 @@ export default function PortalClient({ initialState }) {
             expiresAt: sessionPayload.session.expiresAt,
             status: "approved"
           });
-          appendSessionLog(request.sessionId, "info", "[DEMO] Session approved. Open this session to submit session approval.");
+          appendSessionLog(request.sessionId, "info", "[DEMO] Session approved. Open this session to run the transfer.");
           setDemoContext((current) => current ? { ...current, sessionId: request.sessionId, status: "approved" } : current);
           await refresh();
           return;
@@ -506,7 +506,9 @@ export default function PortalClient({ initialState }) {
           linkLabel: shortHash(txHash, 8, 8)
         });
       }
-      appendLog("info", `[APPROVAL] Session ${approved.session.id} approved.`);
+      appendLog("info", `[APPROVAL] Session ${approved.session.id} approved. Installing session on-chain.`);
+      await submitBootstrapApproval(approved.session);
+      appendLog("info", `[APPROVAL] Session ${approved.session.id} is ready for transfer.`);
     });
 
   const reject = (id) =>
@@ -565,79 +567,36 @@ export default function PortalClient({ initialState }) {
       appendLog("info", `[DEMO] Request ${created.request.id} submitted. Waiting for owner approval.`);
     });
 
-  const runDemoTransfer = () =>
-    submit("run-demo-transfer", "Running demo transfer", async () => {
-      if (!demoContext?.requestId || !demoContext?.sessionId) {
-        throw new Error("No approved demo session is ready");
+  const runDemoTransfer = (session) =>
+    submit(`run-demo-transfer-${session.id}`, `Running transfer for ${session.id}`, async () => {
+      if (!session?.requestId || !session?.id) {
+        throw new Error("No approved session is selected");
       }
-      const demoSession = getReusableDemoSession(ownerAddress);
+      const demoSession = getReusableDemoSession(session.ownerAddress);
       if (!demoSession?.sessionPrivateKey) {
-        throw new Error("Local session key is missing. Start a new demo request.");
+        throw new Error("Local session key is missing for this owner. Start a new demo request.");
+      }
+      if (demoSession.sessionPublicKey.toLowerCase() !== session.sessionPublicKey.toLowerCase()) {
+        throw new Error("The browser's saved session key does not match this session. Start a new demo request for this owner.");
       }
 
-      appendSessionLog(demoContext.sessionId, "info", "[DEMO] Preparing session approval.");
-      const bootstrap = await requestJson("/agent/executions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          requestId: demoContext.requestId,
-          sessionId: demoContext.sessionId,
-          live: true,
-          prepare: "bootstrap"
-        })
-      });
-
-      let bootstrapSubmission;
-      if (bootstrap.prepared.kind === "bootstrap") {
-        const ownerWallet = await ensureLocalOwnerWallet();
-        if (ownerWallet.address.toLowerCase() !== demoContext.ownerAddress.toLowerCase()) {
-          throw new Error("Local owner EOA does not match the approved request owner");
-        }
-        const ownerSignature = await signDemoPayload(ownerWallet.privateKey, bootstrap.prepared.payloadHash);
-        bootstrapSubmission = await requestJson("/agent/executions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            requestId: demoContext.requestId,
-            sessionId: demoContext.sessionId,
-            live: true,
-            submit: "bootstrap",
-            ownerSignature
-          })
-        });
-      } else {
-        bootstrapSubmission = await requestJson("/agent/executions", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            requestId: demoContext.requestId,
-            sessionId: demoContext.sessionId,
-            live: true,
-            submit: "bootstrap"
-          })
-        });
+      if (session.status === "approved") {
+        appendSessionLog(session.id, "info", "[DEMO] Preparing transfer session.");
+        await submitBootstrapApproval(session);
+        appendSessionLog(session.id, "info", "[DEMO] Transfer session is ready.");
       }
-      appendSessionLog(
-        demoContext.sessionId,
-        "info",
-        `[DEMO] Session approval submitted. Session ${demoContext.sessionId} is now active.`,
-        {
-          href: blockscoutTxUrl(bootstrapSubmission?.submission?.txHash),
-          linkLabel: shortHash(bootstrapSubmission?.submission?.txHash, 8, 8)
-        }
-      );
 
       const preparedSession = await requestJson("/agent/executions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          requestId: demoContext.requestId,
-          sessionId: demoContext.sessionId,
+          requestId: session.requestId,
+          sessionId: session.id,
           live: true,
           prepare: "session"
         })
       });
-      appendSessionLog("".concat(demoContext.sessionId), "info", `[DEMO] Signing live payload ${shortHash(preparedSession.prepared.payloadHash, 8, 8)}.`);
+      appendSessionLog(session.id, "info", `[DEMO] Signing live payload ${shortHash(preparedSession.prepared.payloadHash, 8, 8)}.`);
 
       const sessionSignature = await signDemoPayload(
         demoSession.sessionPrivateKey,
@@ -648,8 +607,8 @@ export default function PortalClient({ initialState }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          requestId: demoContext.requestId,
-          sessionId: demoContext.sessionId,
+          requestId: session.requestId,
+          sessionId: session.id,
           live: true,
           submit: "session",
           signerAddress: demoSession.sessionPublicKey,
@@ -658,7 +617,7 @@ export default function PortalClient({ initialState }) {
       });
 
       appendSessionLog(
-        demoContext.sessionId,
+        session.id,
         "info",
         `[DEMO] Live transfer submitted. userOp ${shortHash(submitted.execution.userOpHash, 8, 8)}.`,
         {
@@ -666,8 +625,13 @@ export default function PortalClient({ initialState }) {
           linkLabel: shortHash(submitted.execution.hubTxHash, 8, 8)
         }
       );
-      setDemoContext((current) => current ? { ...current, executionId: submitted.execution.id, status: "submitted" } : current);
+      if (demoContext?.sessionId === session.id) {
+        setDemoContext((current) => current ? { ...current, executionId: submitted.execution.id, status: "submitted" } : current);
+      }
       await refresh();
+    }).catch((error) => {
+      appendSessionLog(session.id, "error", `[DEMO] ${error.message}`);
+      throw error;
     });
 
   const removeSession = (session) =>
@@ -1032,24 +996,21 @@ export default function PortalClient({ initialState }) {
                   <div>
                     <p className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Session action</p>
                     <p className="mt-1 text-sm text-slate-300">
-                      {selectedSession.status === "approved"
-                        ? "Submit session approval from this session view."
-                        : "Run the live transfer from this session view."}
+                      Run the demo transfer from this session view.
                     </p>
                   </div>
                   <button
                     className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-50 transition hover:-translate-y-0.5 hover:bg-emerald-300/16 disabled:opacity-50"
                     disabled={
-                      isRunning("run-demo-transfer")
-                      || demoContext?.sessionId !== selectedSession.id
+                      isRunning(`run-demo-transfer-${selectedSession.id}`)
                       || !["approved", "active", "submitted"].includes(selectedSession.status)
                     }
-                    onClick={runDemoTransfer}
+                    onClick={() => runDemoTransfer(selectedSession)}
                     type="button"
                   >
-                    {isRunning("run-demo-transfer")
-                      ? (selectedSession.status === "approved" ? "Submitting approval..." : "Running transfer...")
-                      : (selectedSession.status === "approved" ? "Submit session approval" : "Run live transfer")}
+                    {isRunning(`run-demo-transfer-${selectedSession.id}`)
+                      ? "Running transfer..."
+                      : "Run live transfer"}
                   </button>
                 </div>
 
