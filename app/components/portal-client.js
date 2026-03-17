@@ -228,6 +228,23 @@ function blockscoutTxUrl(txHash) {
   return `https://blockscout-testnet.polkadot.io/tx/${txHash}`;
 }
 
+function instructionKindLabel(kind) {
+  switch (kind) {
+    case 0:
+      return "WITHDRAW_ASSET";
+    case 1:
+      return "BUY_EXECUTION";
+    case 2:
+      return "PAY_FEES";
+    case 3:
+      return "INITIATE_TRANSFER";
+    case 4:
+      return "DEPOSIT_ASSET";
+    default:
+      return `UNKNOWN_${kind}`;
+  }
+}
+
 function hashSessionId(sessionId) {
   return Array.from(sessionId).reduce((total, char, index) => (
     (total + (char.charCodeAt(0) * (index + 17))) % 9973
@@ -867,25 +884,59 @@ export default function PortalClient({ initialState }) {
                   <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-cyan-100/70">
                     Pending signature
                   </p>
-                  <h3 className="mt-3 text-[1.95rem] font-semibold leading-tight text-white">
-                    {activeRequest.summary}
-                  </h3>
-                  <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="mt-4 rounded-[1.4rem] border border-cyan-300/20 bg-cyan-300/8 px-4 py-4">
+                    <p className="text-[0.62rem] uppercase tracking-[0.18em] text-cyan-100/70">
+                      Program operations
+                    </p>
+                    <h3 className="mt-2 text-[1.35rem] font-semibold leading-tight text-white">
+                      Contract instruction array
+                    </h3>
+                    <div className="mt-4 grid gap-2">
+                      {activeRequest.program.instructions.map((instruction, index) => (
+                        <div
+                          key={`${activeRequest.id}-instruction-${index}`}
+                          className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">
+                              Step {index + 1}
+                            </span>
+                            <strong className="text-xs font-semibold tracking-[0.12em] text-cyan-50">
+                              {instructionKindLabel(instruction.kind)}
+                            </strong>
+                          </div>
+                          <div className="mt-2 grid grid-cols-1 gap-2 text-xs text-slate-300 sm:grid-cols-2">
+                            <span>Asset: {instruction.assetId === "0x0000000000000000000000000000000000000000000000000000000000000000" ? "N/A" : shortHash(instruction.assetId, 8, 8)}</span>
+                            <span>Amount: {instruction.amount}</span>
+                            <span>ParaId: {instruction.paraId}</span>
+                            <span>Account: {instruction.accountId32 === "0x0000000000000000000000000000000000000000000000000000000000000000" ? "N/A" : shortHash(instruction.accountId32, 8, 8)}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
                       <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Owner</span>
                       <strong className="mt-1 block break-all text-sm text-slate-100">{activeRequest.userId}</strong>
                     </div>
                     <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
-                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Target</span>
-                      <strong className="mt-1 block text-sm text-slate-100">{activeRequest.targetChainLabel}</strong>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
-                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Amount</span>
-                      <strong className="mt-1 block text-sm text-slate-100">{activeRequest.explanation.primaryAmount} PAS</strong>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
                       <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Beneficiary</span>
                       <strong className="mt-1 block break-all text-sm text-slate-100">{activeRequest.explanation.beneficiary}</strong>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
+                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Route</span>
+                      <strong className="mt-1 block text-sm text-slate-100">
+                        {activeRequest.sourceChainLabel} to {activeRequest.targetChainLabel}
+                      </strong>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
+                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Action</span>
+                      <strong className="mt-1 block text-sm text-slate-100">{activeRequest.actionType}</strong>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3 sm:col-span-2">
+                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Intention</span>
+                      <strong className="mt-1 block text-sm text-slate-100">{activeRequest.summary}</strong>
                     </div>
                   </div>
                   <div className="mt-6 flex flex-col gap-3 sm:flex-row">
