@@ -229,8 +229,12 @@ function buildBootstrapCallData(config, sessionInstallData) {
 function buildOwnerInstallCallData(config, sessionInstallData) {
   return encodeFunctionData({
     abi: config.abis.wallet,
-    functionName: "installModule",
-    args: [1n, config.hubDeployment.contracts.sessionKeyValidatorModule, sessionInstallData]
+    functionName: "configureValidator",
+    args: [
+      config.hubDeployment.contracts.sessionKeyValidatorModule,
+      "0x",
+      sessionInstallData
+    ]
   });
 }
 

@@ -50,6 +50,20 @@ const CURRENT_SESSION_VALIDATOR_ABI = [
   }
 ];
 
+const CURRENT_WALLET_EXTENSION_ABI = [
+  {
+    type: "function",
+    name: "configureValidator",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "module", type: "address" },
+      { name: "deInitData", type: "bytes" },
+      { name: "initData", type: "bytes" }
+    ],
+    outputs: []
+  }
+];
+
 const CURRENT_DISPATCHER_ABI = [
   {
     type: "function",
@@ -167,7 +181,7 @@ export async function getContractsConfig() {
       },
       abis: {
         walletFactory: CURRENT_WALLET_FACTORY_ABI,
-        wallet: walletArtifact.abi,
+        wallet: [...walletArtifact.abi, ...CURRENT_WALLET_EXTENSION_ABI],
         sessionKeyValidatorModule: CURRENT_SESSION_VALIDATOR_ABI,
         crossChainDispatcher: CURRENT_DISPATCHER_ABI,
         entryPoint: CURRENT_ENTRY_POINT_ABI

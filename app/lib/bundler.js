@@ -164,26 +164,35 @@ export async function buildBootstrapSigningRequest(sessionId) {
 
   if (session.bootstrap?.mode === "owner-install" || deployed) {
     const walletNonce = deployed ? await readWalletNonce(entryPoint.config, entryPoint.clients, sender) : 0n;
-    const sessionState = deployed ? await readSessionState(entryPoint.config, entryPoint.clients, sender) : [0n, 0, 0n, 0, false];
-    const rotateExisting = Boolean(session.bootstrap?.rotateExisting) || Boolean(sessionState[4]);
-    logBundler("Prepared owner install request", {
+    const userOp = makeBaseUserOp({
+      sender,
+      nonce: walletNonce,
+      initCode: "0x",
+      callData: session.bootstrap?.ownerInstallCallData ?? session.bootstrap?.callData
+    });
+    const userOpHash = await readUserOpHash(entryPoint, userOp);
+    const payloadHash = keccak256(
+      encodeAbiParameters(
+        [{ type: "bytes32" }, { type: "address" }, { type: "uint256" }],
+        [userOpHash, sender, POLKADOT_HUB_CHAIN_ID]
+      )
+    );
+    logBundler("Prepared owner install userOp", {
       sessionId,
       walletAddress: sender,
       ownerAddress: session.ownerAddress,
       walletNonce: walletNonce.toString(),
-      rotateExisting
+      userOpHash,
+      payloadHash
     });
     return {
       kind: "owner-install",
       sessionId,
       signerAddress: session.ownerAddress,
-      walletAddress: sender,
-      walletNonce: walletNonce.toString(),
-      rotateExisting,
-      uninstallCallData: session.bootstrap?.ownerUninstallCallData ?? "0x",
-      installCallData: session.bootstrap?.ownerInstallCallData ?? session.bootstrap?.callData,
-      sessionInstallData: session.bootstrap?.sessionInstallData,
-      validatorAddress: session.validatorAddress
+      signatureField: "ownerSignature",
+      userOp: serializeUserOp(userOp),
+      userOpHash,
+      payloadHash
     };
   }
 
@@ -216,9 +225,6 @@ export async function buildBootstrapSigningRequest(sessionId) {
 
 export async function buildBootstrapUserOp(sessionId, ownerSignatureInput) {
   const prepared = await buildBootstrapSigningRequest(sessionId);
-  if (prepared.kind !== "bootstrap") {
-    throw new Error("Bootstrap userOp is only available for first-time wallet setup");
-  }
   const ownerSignature = normalizeSignature(ownerSignatureInput, "ownerSignature");
   prepared.userOp.signature = encodeAbiParameters(
     [{ type: "address" }, { type: "bytes" }],
@@ -269,53 +275,6 @@ export async function buildSessionSigningRequest(sessionId) {
     userOp: serializeUserOp(userOp),
     userOpHash,
     payloadHash
-  };
-}
-
-export async function sendOwnerInstall(sessionId) {
-  const session = await getSessionRecord(sessionId);
-  const entryPoint = await getEntryPointContract();
-  const ownerAddress = getAddress(session.ownerAddress);
-  if (getAddress(entryPoint.clients.account.address) !== ownerAddress) {
-    throw new Error("Configured PRIVATE_KEY does not match the session ownerAddress");
-  }
-
-  const sessionState = await readSessionState(entryPoint.config, entryPoint.clients, session.walletAddress);
-  const rotateExisting = Boolean(session.bootstrap?.rotateExisting) || Boolean(sessionState[4]);
-
-  const uninstallTxHash = rotateExisting
-    ? await entryPoint.clients.walletClient.writeContract({
-      account: entryPoint.clients.account,
-      address: session.walletAddress,
-      abi: entryPoint.config.abis.wallet,
-      functionName: "uninstallModule",
-      args: [1n, session.validatorAddress, "0x"]
-    })
-    : null;
-
-  if (uninstallTxHash) {
-    await entryPoint.clients.publicClient.waitForTransactionReceipt({ hash: uninstallTxHash });
-  }
-
-  const installTxHash = await entryPoint.clients.walletClient.writeContract({
-    account: entryPoint.clients.account,
-    address: session.walletAddress,
-    abi: entryPoint.config.abis.wallet,
-    functionName: "installModule",
-    args: [1n, session.validatorAddress, session.bootstrap.sessionInstallData]
-  });
-  const receipt = await entryPoint.clients.publicClient.waitForTransactionReceipt({ hash: installTxHash });
-
-  await markSessionSubmitted(sessionId, {
-    bootstrapTxHash: installTxHash,
-    activate: true
-  });
-
-  return {
-    kind: "owner-install",
-    txHash: installTxHash,
-    uninstallTxHash,
-    receipt: serializeValue(receipt)
   };
 }
 

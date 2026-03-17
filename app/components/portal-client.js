@@ -9,6 +9,8 @@ const EMPTY_FORM = {
 };
 
 const DEMO_SESSION_STORAGE_KEY = "nova-demo-session-keys";
+const OWNER_WALLET_STORAGE_KEY = "nova-owner-eoa";
+const HUB_RPC_URL = "https://services.polkadothub-rpc.com/testnet";
 
 const CHIP_POSITIONS = [
   "left-4 top-6 md:left-10 md:top-10",
@@ -74,6 +76,25 @@ function readDemoSessionStore() {
   }
 }
 
+function readOwnerWallet() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(OWNER_WALLET_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeOwnerWallet(wallet) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  window.localStorage.setItem(OWNER_WALLET_STORAGE_KEY, JSON.stringify(wallet));
+}
+
 function writeDemoSessionStore(store) {
   if (typeof window === "undefined") {
     return;
@@ -117,6 +138,25 @@ async function createDemoSessionKeyPair() {
     sessionPrivateKey,
     sessionPublicKey: privateKeyToAccount(sessionPrivateKey).address
   };
+}
+
+async function ensureLocalOwnerWallet() {
+  const existing = readOwnerWallet();
+  if (existing?.privateKey && existing?.address) {
+    return existing;
+  }
+
+  const { generatePrivateKey, privateKeyToAccount } = await import("viem/accounts");
+  const privateKey = generatePrivateKey();
+  const address = privateKeyToAccount(privateKey).address;
+  const wallet = { privateKey, address, createdAt: new Date().toISOString() };
+  writeOwnerWallet(wallet);
+  return wallet;
+}
+
+async function getOwnerAccount(privateKey) {
+  const { privateKeyToAccount } = await import("viem/accounts");
+  return privateKeyToAccount(privateKey);
 }
 
 async function signDemoPayload(sessionPrivateKey, payloadHash) {
@@ -201,6 +241,14 @@ export default function PortalClient({ initialState }) {
     const snapshot = await requestJson("/api/state");
     setState(snapshot);
   };
+
+  useEffect(() => {
+    ensureLocalOwnerWallet()
+      .then((wallet) => {
+        setOwnerAddress(wallet.address);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -306,6 +354,51 @@ export default function PortalClient({ initialState }) {
     }
   };
 
+  const submitBootstrapApproval = async (session) => {
+    const ownerWallet = await ensureLocalOwnerWallet();
+    if (ownerWallet.address.toLowerCase() !== session.ownerAddress.toLowerCase()) {
+      throw new Error("Local owner EOA does not match the request owner");
+    }
+
+    const account = await getOwnerAccount(ownerWallet.privateKey);
+    const preparedPayload = await requestJson("/agent/executions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requestId: session.requestId,
+        sessionId: session.id,
+        live: true,
+        prepare: "bootstrap"
+      })
+    });
+    const ownerSignature = await account.signMessage({
+      message: { raw: preparedPayload.prepared.payloadHash }
+    });
+    const submission = await requestJson("/agent/executions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        requestId: session.requestId,
+        sessionId: session.id,
+        live: true,
+        submit: "bootstrap",
+        ownerSignature
+      })
+    });
+    appendLog("info", "[APPROVAL] tx sent", {
+      href: blockscoutTxUrl(submission.submission.txHash),
+      linkLabel: shortHash(submission.submission.txHash, 8, 8)
+    });
+    appendLog("info", "[APPROVAL] waiting for confirmation", {
+      href: blockscoutTxUrl(submission.submission.txHash),
+      linkLabel: shortHash(submission.submission.txHash, 8, 8)
+    });
+    appendLog("info", "[APPROVAL] tx confirmed", {
+      href: blockscoutTxUrl(submission.submission.txHash),
+      linkLabel: shortHash(submission.submission.txHash, 8, 8)
+    });
+  };
+
   const deployWallet = () =>
     submit("deploy-wallet", "Preparing wallet", async () => {
       await requestJson("/api/wallet/deploy", {
@@ -337,6 +430,7 @@ export default function PortalClient({ initialState }) {
           linkLabel: shortHash(txHash, 8, 8)
         });
       }
+      await submitBootstrapApproval(approved.session);
     });
 
   const reject = (id) =>
@@ -876,16 +970,16 @@ export default function PortalClient({ initialState }) {
                       </h2>
                       <div className="mt-5 grid gap-3">
                         <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
-                          <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Wallet status</span>
-                          <strong className="mt-1 block text-sm text-slate-100">{state.wallet.status}</strong>
+                          <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Wallet deployed</span>
+                          <strong className="mt-1 block text-sm text-slate-100">
+                            {state.wallet.deployedWalletAddress ? "Yes" : "No"}
+                          </strong>
                         </div>
                         <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
-                          <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Predicted</span>
-                          <strong className="mt-1 block break-all text-sm text-slate-100">{state.wallet.predictedWalletAddress ?? "Unavailable"}</strong>
-                        </div>
-                        <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
-                          <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Deployed</span>
-                          <strong className="mt-1 block break-all text-sm text-slate-100">{state.wallet.deployedWalletAddress ?? "Not deployed"}</strong>
+                          <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Agent wallet address</span>
+                          <strong className="mt-1 block break-all text-sm text-slate-100">
+                            {state.wallet.deployedWalletAddress ?? state.wallet.predictedWalletAddress ?? "Unavailable"}
+                          </strong>
                         </div>
                       </div>
                     </section>
