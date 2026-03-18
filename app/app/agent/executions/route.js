@@ -17,6 +17,7 @@ export const dynamic = "force-dynamic";
 export async function POST(request) {
   try {
     const body = await request.json();
+    const ownerAddress = body.ownerAddress ?? body.signerAddress ?? body.requestOwnerAddress ?? null;
     console.log("[agent/executions] request", {
       requestId: body.requestId,
       sessionId: body.sessionId,
@@ -28,8 +29,8 @@ export async function POST(request) {
     });
     let execution;
     if (body.live === true) {
-      const approvedRequest = await getRequestById(body.requestId);
-      const session = await getSessionRecord(body.sessionId);
+      const approvedRequest = await getRequestById(body.requestId, ownerAddress);
+      const session = await getSessionRecord(body.sessionId, { ownerAddress });
 
       if (body.prepare === "bootstrap") {
         const prepared = await buildBootstrapSigningRequest(body.sessionId);

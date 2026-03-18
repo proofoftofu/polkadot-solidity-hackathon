@@ -31,6 +31,11 @@ async function requestJson(url, options) {
   return payload;
 }
 
+async function signOwnerChallenge(ownerWallet, challenge) {
+  const { privateKeyToAccount } = await import("viem/accounts");
+  return privateKeyToAccount(ownerWallet.privateKey).signMessage({ message: challenge });
+}
+
 function fmtDate(value) {
   if (!value) {
     return "Unknown";
@@ -316,7 +321,7 @@ export default function PortalClient({ initialState }) {
   };
 
   const refresh = async () => {
-    const snapshot = await requestJson("/api/state");
+    const snapshot = await requestJson(`/api/state?ownerAddress=${encodeURIComponent(ownerAddress)}`);
     setState(snapshot);
   };
 
@@ -387,7 +392,7 @@ export default function PortalClient({ initialState }) {
     let stopped = false;
     const poll = async () => {
       try {
-        const payload = await requestJson(`/agent/requests/${demoContext.requestId}`);
+        const payload = await requestJson(`/agent/requests/${demoContext.requestId}?ownerAddress=${encodeURIComponent(demoContext.ownerAddress ?? ownerAddress)}`);
         if (stopped) {
           return;
         }
@@ -395,7 +400,12 @@ export default function PortalClient({ initialState }) {
         if (request.status === "approved" && request.sessionId) {
           let sessionPayload = null;
           try {
-            sessionPayload = await requestJson(`/agent/sessions/${request.sessionId}`);
+            const ownerWallet = await ensureLocalOwnerWallet();
+            const challenge = `agent-wallet:session:${request.sessionId}:owner:${request.userId}`;
+            const signature = await signOwnerChallenge(ownerWallet, challenge);
+            sessionPayload = await requestJson(
+              `/agent/sessions/${request.sessionId}?ownerAddress=${encodeURIComponent(request.userId)}&challenge=${encodeURIComponent(challenge)}&signature=${encodeURIComponent(signature)}`
+            );
           } catch (error) {
             if (error.message.includes("Session not found")) {
               return;
@@ -630,7 +640,12 @@ export default function PortalClient({ initialState }) {
       if (!session?.requestId || !session?.id) {
         throw new Error("No approved session is selected");
       }
-      const latestSessionPayload = await requestJson(`/agent/sessions/${session.id}`);
+      const ownerWallet = await ensureLocalOwnerWallet();
+      const challenge = `agent-wallet:session:${session.id}:owner:${session.ownerAddress}`;
+      const signature = await signOwnerChallenge(ownerWallet, challenge);
+      const latestSessionPayload = await requestJson(
+        `/agent/sessions/${session.id}?ownerAddress=${encodeURIComponent(session.ownerAddress)}&challenge=${encodeURIComponent(challenge)}&signature=${encodeURIComponent(signature)}`
+      );
       const latestSession = latestSessionPayload.session;
       const demoSession = getReusableDemoSession(latestSession.ownerAddress);
       if (!demoSession?.sessionPrivateKey) {

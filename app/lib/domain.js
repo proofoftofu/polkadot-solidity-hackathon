@@ -72,6 +72,18 @@ function resolveOwnerAddress(ownerAddress) {
   return getAddress(address);
 }
 
+function resolveStateOwner(ownerAddress) {
+  return resolveOwnerAddress(ownerAddress);
+}
+
+async function readOwnerState(ownerAddress) {
+  return readState(resolveStateOwner(ownerAddress));
+}
+
+async function writeOwnerState(ownerAddress, state) {
+  return writeState(resolveStateOwner(ownerAddress), state);
+}
+
 function normalizeSessionPublicKey(sessionPublicKey) {
   if (!sessionPublicKey || !isAddress(sessionPublicKey)) {
     throw new Error("sessionPublicKey is required and must be a valid address");
@@ -556,7 +568,7 @@ export async function createAgentRequest(payload) {
   const program = buildProgram(payload.targetChain, payload.program);
   validateProgram(program, route);
 
-  const state = await readState();
+  const state = await readOwnerState(payload.ownerAddress);
   const request = {
     id: makeId("req"),
     agentId: APP_AGENT_ID,
@@ -578,17 +590,17 @@ export async function createAgentRequest(payload) {
   };
 
   state.requests.unshift(request);
-  await writeState(toSerializable(state));
+  await writeOwnerState(payload.ownerAddress, toSerializable(state));
   return toSerializable(request);
 }
 
 export async function listRequests() {
-  const state = await readState();
+  const state = await readOwnerState();
   return state.requests;
 }
 
-export async function getRequestById(id) {
-  const state = await readState();
+export async function getRequestById(id, ownerAddress) {
+  const state = await readOwnerState(ownerAddress);
   const request = state.requests.find((entry) => entry.id === id);
   if (!request) {
     throw new Error("Request not found");
@@ -597,7 +609,7 @@ export async function getRequestById(id) {
 }
 
 export async function rejectRequest(id) {
-  const state = await readState();
+  const state = await readOwnerState();
   const request = state.requests.find((entry) => entry.id === id);
   if (!request) {
     throw new Error("Request not found");
@@ -607,14 +619,14 @@ export async function rejectRequest(id) {
   }
   request.status = "rejected";
   request.updatedAt = nowIso();
-  await writeState(state);
+  await writeOwnerState(request.userId, state);
   return request;
 }
 
 export async function approveRequest(id, ownerAddress) {
   const startedAt = Date.now();
   logApprovalStep("start", { id, ownerAddress: ownerAddress ?? null });
-  const state = await readState();
+  const state = await readOwnerState(ownerAddress);
   const request = state.requests.find((entry) => entry.id === id);
   if (!request) {
     throw new Error("Request not found");
@@ -690,7 +702,7 @@ export async function approveRequest(id, ownerAddress) {
     requestId: request.id,
     sessionId: session.id
   });
-  await writeState(toSerializable(state));
+  await writeOwnerState(request.userId, toSerializable(state));
   logApprovalStep("state-write:done", {
     requestId: request.id,
     sessionId: session.id,
@@ -705,7 +717,7 @@ export async function approveRequest(id, ownerAddress) {
 }
 
 export async function prepareSessionForExecution(sessionId) {
-  const state = await readState();
+  const state = await readOwnerState();
   const session = state.sessions.find((entry) => entry.id === sessionId);
   if (!session) {
     throw new Error("Session not found");
@@ -731,7 +743,7 @@ export async function prepareSessionForExecution(sessionId) {
     dispatcherAddress: prepared.dispatcher.dispatcherAddress,
     walletTopUpTx: prepared.dispatcher.walletTopUpTx ?? null
   });
-  await writeState(toSerializable(state));
+  await writeOwnerState(session.ownerAddress, toSerializable(state));
   logApprovalStep("prepare-session:done", {
     sessionId,
     elapsedMs: Date.now() - startedAt
@@ -739,13 +751,13 @@ export async function prepareSessionForExecution(sessionId) {
   return sanitizeSession(session);
 }
 
-export async function listSessions() {
-  const state = await readState();
+export async function listSessions(ownerAddress) {
+  const state = await readOwnerState(ownerAddress);
   return state.sessions.map((session) => sanitizeSession(session));
 }
 
-export async function removeSessionById(id) {
-  const state = await readState();
+export async function removeSessionById(id, ownerAddress) {
+  const state = await readOwnerState(ownerAddress);
   const sessionIndex = state.sessions.findIndex((entry) => entry.id === id);
   if (sessionIndex === -1) {
     throw new Error("Session not found");
@@ -762,16 +774,16 @@ export async function removeSessionById(id) {
   }
 
   state.executions = state.executions.filter((entry) => entry.sessionId !== session.id);
-  await writeState(toSerializable(state));
+  await writeOwnerState(session.ownerAddress, toSerializable(state));
   return sanitizeSession(session);
 }
 
-export async function getSessionById(id) {
-  return getSessionRecord(id);
+export async function getSessionById(id, ownerAddress) {
+  return getSessionRecord(id, { ownerAddress });
 }
 
 export async function getSessionRecord(id, options = {}) {
-  const state = await readState();
+  const state = await readOwnerState(options.ownerAddress);
   const session = state.sessions.find((entry) => entry.id === id);
   if (!session) {
     throw new Error("Session not found");
@@ -779,25 +791,25 @@ export async function getSessionRecord(id, options = {}) {
   return sanitizeSession(session);
 }
 
-export async function listExecutions() {
-  const state = await readState();
+export async function listExecutions(ownerAddress) {
+  const state = await readOwnerState(ownerAddress);
   return state.executions;
 }
 
 export async function getWalletStatus(ownerAddress) {
-  const state = await readState();
+  const state = await readOwnerState(ownerAddress);
   const wallet = await ensureWallet(state, ownerAddress);
-  await writeState(state);
+  await writeOwnerState(ownerAddress, state);
   return wallet;
 }
 
 export async function getWalletRecord(ownerAddress) {
-  const state = await readState();
+  const state = await readOwnerState(ownerAddress);
   return ensureWallet(state, ownerAddress);
 }
 
 export async function prepareWalletForOwner(ownerAddress) {
-  const state = await readState();
+  const state = await readOwnerState(ownerAddress);
   const wallet = await ensureWallet(state, ownerAddress);
   const config = await getContractsConfig();
   const dispatcher = await ensureDispatcher(
@@ -807,7 +819,7 @@ export async function prepareWalletForOwner(ownerAddress) {
     { fundDerived: true }
   );
 
-  await writeState(toSerializable(state));
+  await writeOwnerState(ownerAddress, toSerializable(state));
 
   return {
     wallet: toSerializable(wallet),
@@ -824,7 +836,7 @@ export async function prepareWalletForOwner(ownerAddress) {
 }
 
 export async function deployWalletForOwner(ownerAddress) {
-  const state = await readState();
+  const state = await readOwnerState(ownerAddress);
   const wallet = await ensureWallet(state, ownerAddress);
   wallet.deployedWalletAddress = wallet.predictedWalletAddress ?? wallet.deployedWalletAddress;
   wallet.status = wallet.deployedWalletAddress ? "deployed" : "simulated";
@@ -842,12 +854,12 @@ export async function deployWalletForOwner(ownerAddress) {
     }
   }
 
-  await writeState(state);
+  await writeOwnerState(ownerAddress, state);
   return wallet;
 }
 
 export async function markSessionSubmitted(sessionId, updates) {
-  const state = await readState();
+  const state = await readOwnerState();
   const session = state.sessions.find((entry) => entry.id === sessionId);
   if (!session) {
     throw new Error("Session not found");
@@ -870,12 +882,12 @@ export async function markSessionSubmitted(sessionId, updates) {
   }
 
   session.updatedAt = nowIso();
-  await writeState(state);
+  await writeOwnerState(session.ownerAddress, state);
   return session;
 }
 
 export async function markExecutionSubmitted(executionId, updates) {
-  const state = await readState();
+  const state = await readOwnerState();
   const execution = state.executions.find((entry) => entry.id === executionId);
   if (!execution) {
     throw new Error("Execution not found");
@@ -885,7 +897,7 @@ export async function markExecutionSubmitted(executionId, updates) {
   execution.hubTxHash = updates.hubTxHash ?? execution.hubTxHash;
   execution.userOpHash = updates.userOpHash ?? execution.userOpHash;
   execution.updatedAt = nowIso();
-  await writeState(state);
+  await writeOwnerState(ownerAddress, state);
   return execution;
 }
 
@@ -898,7 +910,7 @@ export async function executeAgentRequestWithOptions({ requestId, sessionId, res
     throw new Error("requestId and sessionId are required");
   }
 
-  const state = await readState();
+  const state = await readOwnerState();
   const request = state.requests.find((entry) => entry.id === requestId);
   if (!request) {
     throw new Error("Request not found");
@@ -937,14 +949,14 @@ export async function executeAgentRequestWithOptions({ requestId, sessionId, res
   request.updatedAt = nowIso();
   session.updatedAt = nowIso();
   state.executions.unshift(execution);
-  await writeState(state);
+  await writeOwnerState(session.ownerAddress, state);
   return execution;
 }
 
 export async function getPortalSnapshot(ownerAddress) {
-  const state = await readState();
+  const state = await readOwnerState(ownerAddress);
   const wallet = await ensureWallet(state, ownerAddress);
-  await writeState(state);
+  await writeOwnerState(ownerAddress, state);
   return {
     wallet,
     requests: state.requests,
