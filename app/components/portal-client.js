@@ -289,6 +289,7 @@ export default function PortalClient({ initialState }) {
   const seenEventKeysRef = useRef(new Set(buildStateEventEntries(initialState).map((entry) => entry.key)));
   const stageRef = useRef(null);
   const dragStateRef = useRef(null);
+  const ownerAddressRef = useRef(ownerAddress);
 
   const appendLog = (tone, text, meta = null) => {
     setTerminalLogs((current) => [
@@ -320,8 +321,9 @@ export default function PortalClient({ initialState }) {
     }));
   };
 
-  const refresh = async () => {
-    const snapshot = await requestJson(`/api/state?ownerAddress=${encodeURIComponent(ownerAddress)}`);
+  const refresh = async (forcedOwnerAddress = null) => {
+    const effectiveOwnerAddress = forcedOwnerAddress ?? ownerAddressRef.current;
+    const snapshot = await requestJson(`/api/state?ownerAddress=${encodeURIComponent(effectiveOwnerAddress)}`);
     setState(snapshot);
   };
 
@@ -351,6 +353,17 @@ export default function PortalClient({ initialState }) {
   }, []);
 
   useEffect(() => {
+    ownerAddressRef.current = ownerAddress;
+  }, [ownerAddress]);
+
+  useEffect(() => {
+    if (!ownerAddress) {
+      return undefined;
+    }
+    refresh(ownerAddress).catch(() => {});
+  }, [ownerAddress]);
+
+  useEffect(() => {
     setSessionPositions(readSessionLayoutStore());
   }, []);
 
@@ -359,7 +372,7 @@ export default function PortalClient({ initialState }) {
       refresh().catch(() => {});
     }, 5000);
     return () => clearInterval(timer);
-  }, []);
+  }, [ownerAddress]);
 
   useEffect(() => {
     const nextEntries = [];
