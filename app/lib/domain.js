@@ -371,20 +371,12 @@ async function readLiveWalletState(config, walletAddress) {
 
 async function ensureWallet(state, ownerAddress) {
   const normalizedOwner = resolveOwnerAddress(ownerAddress);
-  logApprovalStep("ensureWallet:start", { ownerAddress: normalizedOwner });
   let wallet = state.wallets.find((entry) => entry.ownerAddress === normalizedOwner);
   const config = await getContractsConfig();
 
   if (!wallet) {
-    logApprovalStep("ensureWallet:create-wallet-record");
     const predictedWalletAddress = await predictWalletAddress(normalizedOwner);
-    logApprovalStep("ensureWallet:predicted-wallet", { predictedWalletAddress });
     const liveState = await readLiveWalletState(config, predictedWalletAddress);
-    logApprovalStep("ensureWallet:live-wallet-state", {
-      deployed: liveState?.deployed ?? false,
-      nonce: liveState?.nonce?.toString?.() ?? null,
-      validatorInstalled: liveState?.validatorInstalled ?? false
-    });
     wallet = {
       ownerAddress: normalizedOwner,
       predictedWalletAddress,
@@ -398,7 +390,6 @@ async function ensureWallet(state, ownerAddress) {
     };
     state.wallets.unshift(wallet);
   } else if (!wallet.predictedWalletAddress) {
-    logApprovalStep("ensureWallet:backfill-predicted-wallet");
     wallet.predictedWalletAddress = await predictWalletAddress(normalizedOwner);
     if (wallet.predictedWalletAddress) {
       wallet.status = wallet.deployedWalletAddress ? wallet.status : "predicted";
@@ -407,9 +398,6 @@ async function ensureWallet(state, ownerAddress) {
   }
 
   if (wallet.predictedWalletAddress) {
-    logApprovalStep("ensureWallet:refresh-live-wallet-state", {
-      predictedWalletAddress: wallet.predictedWalletAddress
-    });
     const liveState = await readLiveWalletState(config, wallet.predictedWalletAddress);
     if (liveState?.deployed) {
       wallet.deployedWalletAddress = wallet.predictedWalletAddress;
@@ -426,15 +414,6 @@ async function ensureWallet(state, ownerAddress) {
       wallet.updatedAt = nowIso();
     }
   }
-
-  logApprovalStep("ensureWallet:done", {
-    ownerAddress: wallet.ownerAddress,
-    predictedWalletAddress: wallet.predictedWalletAddress,
-    deployedWalletAddress: wallet.deployedWalletAddress,
-    status: wallet.status,
-    liveNonce: wallet.liveNonce,
-    validatorInstalled: wallet.validatorInstalled
-  });
   return wallet;
 }
 
@@ -713,8 +692,8 @@ export async function approveRequest(id, ownerAddress) {
   };
 }
 
-export async function prepareSessionForExecution(sessionId) {
-  const state = await readOwnerState();
+export async function prepareSessionForExecution(sessionId, ownerAddress) {
+  const state = await readOwnerState(ownerAddress);
   const session = state.sessions.find((entry) => entry.id === sessionId);
   if (!session) {
     throw new Error("Session not found");
@@ -855,8 +834,8 @@ export async function deployWalletForOwner(ownerAddress) {
   return wallet;
 }
 
-export async function markSessionSubmitted(sessionId, updates) {
-  const state = await readOwnerState();
+export async function markSessionSubmitted(sessionId, updates, ownerAddress) {
+  const state = await readOwnerState(ownerAddress);
   const session = state.sessions.find((entry) => entry.id === sessionId);
   if (!session) {
     throw new Error("Session not found");
@@ -894,7 +873,7 @@ export async function markExecutionSubmitted(executionId, updates) {
   execution.hubTxHash = updates.hubTxHash ?? execution.hubTxHash;
   execution.userOpHash = updates.userOpHash ?? execution.userOpHash;
   execution.updatedAt = nowIso();
-  await writeOwnerState(ownerAddress, state);
+  await writeOwnerState(execution.ownerAddress, state);
   return execution;
 }
 
@@ -902,12 +881,12 @@ export async function executeAgentRequest({ requestId, sessionId }) {
   return executeAgentRequestWithOptions({ requestId, sessionId });
 }
 
-export async function executeAgentRequestWithOptions({ requestId, sessionId, resultOverride, statusOverride }) {
+export async function executeAgentRequestWithOptions({ requestId, sessionId, ownerAddress, resultOverride, statusOverride }) {
   if (!requestId || !sessionId) {
     throw new Error("requestId and sessionId are required");
   }
 
-  const state = await readOwnerState();
+  const state = await readOwnerState(ownerAddress);
   const request = state.requests.find((entry) => entry.id === requestId);
   if (!request) {
     throw new Error("Request not found");

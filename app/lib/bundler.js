@@ -89,6 +89,14 @@ function normalizeSignature(signature, field = "signature") {
   return signature;
 }
 
+function bumpFee(value, multiplierNumerator = 125n, multiplierDenominator = 100n) {
+  if (typeof value !== "bigint") {
+    return value;
+  }
+  const bumped = (value * multiplierNumerator) / multiplierDenominator;
+  return bumped > value ? bumped : value + 1n;
+}
+
 async function getEntryPointContract() {
   const config = await getContractsConfig();
   const clients = createBundlerClients(config);
@@ -145,15 +153,36 @@ async function sendPackedUserOperation(userOp) {
   const entryPoint = await getEntryPointContract();
   const hydrated = hydrateUserOp(userOp);
   const hash = await readUserOpHash(entryPoint, hydrated);
-  logBundler("Submitting handleOps", { sender: hydrated.sender, nonce: hydrated.nonce.toString(), userOpHash: hash });
+  const feeEstimate = await entryPoint.clients.publicClient.estimateFeesPerGas().catch(() => ({}));
+  const maxFeePerGas = feeEstimate.maxFeePerGas ?? feeEstimate.gasPrice;
+  const maxPriorityFeePerGas = feeEstimate.maxPriorityFeePerGas ?? feeEstimate.gasPrice;
+  const feeOverrides = {};
+  if (typeof maxFeePerGas === "bigint") {
+    feeOverrides.maxFeePerGas = bumpFee(maxFeePerGas, 130n, 100n);
+  }
+  if (typeof maxPriorityFeePerGas === "bigint") {
+    feeOverrides.maxPriorityFeePerGas = bumpFee(maxPriorityFeePerGas, 150n, 100n);
+  }
+  logBundler("Submitting handleOps", {
+    sender: hydrated.sender,
+    nonce: hydrated.nonce.toString(),
+    userOpHash: hash,
+    ...feeOverrides
+  });
   const txHash = await entryPoint.clients.walletClient.writeContract({
     account: entryPoint.clients.account,
     address: entryPoint.address,
     abi: entryPoint.abi,
     functionName: "handleOps",
-    args: [[hydrated]]
+    args: [[hydrated]],
+    ...feeOverrides
   });
   const receipt = await entryPoint.clients.publicClient.waitForTransactionReceipt({ hash: txHash });
+  logBundler("handleOps accepted", {
+    txHash,
+    userOpHash: hash,
+    explorerUrl: `https://blockscout-testnet.polkadot.io/tx/${txHash}`
+  });
   return {
     userOpHash: hash,
     txHash,
@@ -161,8 +190,8 @@ async function sendPackedUserOperation(userOp) {
   };
 }
 
-export async function buildBootstrapSigningRequest(sessionId) {
-  const session = await prepareSessionForExecution(sessionId);
+export async function buildBootstrapSigningRequest(sessionId, ownerAddress) {
+  const session = await prepareSessionForExecution(sessionId, ownerAddress);
   const wallet = await getWalletRecord(session.ownerAddress);
   const entryPoint = await getEntryPointContract();
   const sender = session.walletAddress ?? wallet.predictedWalletAddress;
@@ -229,18 +258,19 @@ export async function buildBootstrapSigningRequest(sessionId) {
   };
 }
 
-export async function buildBootstrapUserOp(sessionId, ownerSignatureInput) {
-  const prepared = await buildBootstrapSigningRequest(sessionId);
+export async function buildBootstrapUserOp(sessionId, ownerSignatureInput, ownerAddress) {
+  const prepared = await buildBootstrapSigningRequest(sessionId, ownerAddress);
   const ownerSignature = normalizeSignature(ownerSignatureInput, "ownerSignature");
   prepared.userOp.signature = encodeAbiParameters(
     [{ type: "address" }, { type: "bytes" }],
     [ZERO_ADDRESS, ownerSignature]
   );
+  prepared.ownerAddress = ownerAddress;
   return prepared;
 }
 
-export async function buildSessionSigningRequest(sessionId) {
-  const session = await prepareSessionForExecution(sessionId);
+export async function buildSessionSigningRequest(sessionId, ownerAddress) {
+  const session = await prepareSessionForExecution(sessionId, ownerAddress);
   if (session.status !== "active") {
     throw new Error("Session must be active before building a session userOp");
   }
@@ -284,8 +314,8 @@ export async function buildSessionSigningRequest(sessionId) {
   };
 }
 
-export async function buildSessionUserOp(sessionId, sessionSignatureInput, signerAddressInput) {
-  const prepared = await buildSessionSigningRequest(sessionId);
+export async function buildSessionUserOp(sessionId, sessionSignatureInput, signerAddressInput, ownerAddress) {
+  const prepared = await buildSessionSigningRequest(sessionId, ownerAddress);
   const signerAddress = getAddress(signerAddressInput ?? prepared.signerAddress);
   if (signerAddress !== getAddress(prepared.signerAddress)) {
     throw new Error("signerAddress does not match the approved sessionPublicKey");
@@ -294,10 +324,11 @@ export async function buildSessionUserOp(sessionId, sessionSignatureInput, signe
   prepared.userOp.signature = encodeAbiParameters(
     [{ type: "address" }, { type: "bytes" }],
     [
-      (await getSessionRecord(sessionId)).validatorAddress,
+      (await getSessionRecord(sessionId, { ownerAddress })).validatorAddress,
       encodeAbiParameters([{ type: "address" }, { type: "bytes" }], [signerAddress, sessionSignature])
     ]
   );
+  prepared.ownerAddress = ownerAddress;
   return prepared;
 }
 
@@ -309,14 +340,14 @@ export async function sendUserOperation(input) {
       bootstrapTxHash: submission.txHash,
       bootstrapUserOpHash: submission.userOpHash,
       activate: true
-    });
+    }, input.ownerAddress);
   }
 
   if (input.kind === "session" && input.sessionId) {
     await markSessionSubmitted(input.sessionId, {
       lastUserOpTxHash: submission.txHash,
       lastUserOpHash: submission.userOpHash
-    });
+    }, input.ownerAddress);
   }
 
   if (input.executionId) {

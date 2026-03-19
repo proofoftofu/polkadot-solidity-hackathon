@@ -115,6 +115,21 @@ const CURRENT_ENTRY_POINT_ABI = [
     inputs: [{ name: "reason", type: "bytes" }]
   },
   {
+    type: "error",
+    name: "SenderDeploymentFailed",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "SenderAddressMismatch",
+    inputs: []
+  },
+  {
+    type: "error",
+    name: "PaymasterValidationFailed",
+    inputs: []
+  },
+  {
     type: "function",
     name: "handleOps",
     stateMutability: "nonpayable",

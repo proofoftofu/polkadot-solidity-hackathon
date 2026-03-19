@@ -683,10 +683,12 @@ export default function PortalClient({ initialState }) {
 
       if (latestSession.status === "approved") {
         appendSessionLog(session.id, "info", "[DEMO] Preparing transfer runtime.");
+        appendSessionLog(session.id, "info", "[DEMO] Awaiting owner bootstrap signature.");
         await submitBootstrapApproval(latestSession);
         appendSessionLog(session.id, "info", "[DEMO] Transfer runtime is ready.");
       }
 
+      appendSessionLog(session.id, "info", "[DEMO] Preparing session payload for live transfer.");
       const preparedSession = await requestJson("/agent/executions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -698,12 +700,14 @@ export default function PortalClient({ initialState }) {
           prepare: "session"
         })
       });
+      appendSessionLog(session.id, "info", "[DEMO] Session payload prepared.");
       appendSessionLog(session.id, "info", `[DEMO] Signing live payload ${shortHash(preparedSession.prepared.payloadHash, 8, 8)}.`);
 
       const sessionSignature = await signDemoPayload(
         demoSession.sessionPrivateKey,
         preparedSession.prepared.payloadHash
       );
+      appendSessionLog(session.id, "info", "[DEMO] Submitting signed live transfer.");
 
       const submitted = await requestJson("/agent/executions", {
         method: "POST",
@@ -718,6 +722,17 @@ export default function PortalClient({ initialState }) {
           sessionSignature
         })
       });
+      if (submitted?.execution?.hubTxHash) {
+        appendSessionLog(
+          session.id,
+          "info",
+          `[DEMO] Live transfer tx ${shortHash(submitted.execution.hubTxHash, 8, 8)}.`,
+          {
+            href: blockscoutTxUrl(submitted.execution.hubTxHash),
+            linkLabel: shortHash(submitted.execution.hubTxHash, 8, 8)
+          }
+        );
+      }
 
       appendSessionLog(
         session.id,
