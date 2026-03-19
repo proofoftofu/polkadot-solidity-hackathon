@@ -12,6 +12,7 @@ const DEMO_SESSION_STORAGE_KEY = "nova-demo-session-keys";
 const OWNER_WALLET_STORAGE_KEY = "nova-owner-eoa";
 const SESSION_LAYOUT_STORAGE_KEY = "nova-session-layout";
 const HUB_RPC_URL = "https://eth-rpc-testnet.polkadot.io";
+const ENABLE_LOCAL_DEMO = process.env.NEXT_PUBLIC_ENABLE_LOCAL_DEMO === "true";
 
 const CHIP_POSITIONS = [
   { x: 24, y: 24 },
@@ -850,15 +851,17 @@ export default function PortalClient({ initialState }) {
           </div>
 
           <div className="flex items-center gap-2 md:gap-3">
-            <button
-              className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-50 transition hover:-translate-y-0.5 hover:bg-emerald-300/16 disabled:opacity-50"
-              disabled={isRunning("initiate-demo")}
-              onClick={initiateDemoAgent}
-              data-testid="initiate-demo-agent"
-              type="button"
-            >
-              {isRunning("initiate-demo") ? "Initiating..." : "Initiate demo agent"}
-            </button>
+            {ENABLE_LOCAL_DEMO ? (
+              <button
+                className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-50 transition hover:-translate-y-0.5 hover:bg-emerald-300/16 disabled:opacity-50"
+                disabled={isRunning("initiate-demo")}
+                onClick={initiateDemoAgent}
+                data-testid="initiate-demo-agent"
+                type="button"
+              >
+                {isRunning("initiate-demo") ? "Initiating..." : "Initiate demo agent"}
+              </button>
+            ) : null}
             <button
               className="rounded-full border border-cyan-300/30 bg-cyan-300/10 px-4 py-2 text-sm font-semibold text-cyan-50 transition hover:-translate-y-0.5 hover:bg-cyan-300/16 disabled:opacity-50"
               onClick={() => setControlWindowOpen(true)}
@@ -936,6 +939,9 @@ export default function PortalClient({ initialState }) {
             <div className="flex items-center justify-between">
               <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-cyan-100/65">
                 Approve session
+                <span className="ml-2 text-slate-400">
+                  {pendingRequests.length ? `${activeRequestIndex + 1} / ${pendingRequests.length}` : "0 / 0"}
+                </span>
               </p>
               <button
                 className="rounded-full border border-white/10 bg-white/8 px-4 py-2 text-sm font-medium text-slate-200 transition hover:-translate-y-0.5 disabled:opacity-40"
@@ -1162,20 +1168,22 @@ export default function PortalClient({ initialState }) {
                       Run the demo transfer from this session view.
                     </p>
                   </div>
-                  <button
-                    className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-50 transition hover:-translate-y-0.5 hover:bg-emerald-300/16 disabled:opacity-50"
-                    disabled={
-                      isRunning(`run-demo-transfer-${selectedSession.id}`)
-                      || !["approved", "active", "submitted"].includes(selectedSession.status)
-                    }
-                    onClick={() => runDemoTransfer(selectedSession)}
-                    data-testid={`run-live-transfer-${selectedSession.id}`}
-                    type="button"
-                  >
-                    {isRunning(`run-demo-transfer-${selectedSession.id}`)
-                      ? "Running transfer..."
-                      : "Run live transfer"}
-                  </button>
+                  {ENABLE_LOCAL_DEMO ? (
+                    <button
+                      className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-50 transition hover:-translate-y-0.5 hover:bg-emerald-300/16 disabled:opacity-50"
+                      disabled={
+                        isRunning(`run-demo-transfer-${selectedSession.id}`)
+                        || !["approved", "active", "submitted"].includes(selectedSession.status)
+                      }
+                      onClick={() => runDemoTransfer(selectedSession)}
+                      data-testid={`run-live-transfer-${selectedSession.id}`}
+                      type="button"
+                    >
+                      {isRunning(`run-demo-transfer-${selectedSession.id}`)
+                        ? "Running transfer..."
+                        : "Run live transfer"}
+                    </button>
+                  ) : null}
                 </div>
 
                 <div className="mt-4 max-h-[220px] overflow-y-auto rounded-[1rem] border border-white/10 bg-black/30 p-3">
