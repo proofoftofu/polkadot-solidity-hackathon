@@ -1480,11 +1480,11 @@ export default function PortalClient({ initialState }) {
                       Open{" "}
                       <a
                         className="font-mono text-cyan-100 underline underline-offset-4"
-                        href="https://vercel.com/proofoftof-projects/skills/agent-interaction/SKILL.md"
+                        href="https://github.com/proofoftofu/polkadot-solidity-hackathon/tree/main/skills/agent-interaction"
                         rel="noreferrer"
                         target="_blank"
                       >
-                        /skills/agent-interaction/SKILL.md
+                        github.com/proofoftofu/polkadot-solidity-hackathon/tree/main/skills/agent-interaction
                       </a>{" "}
                       and install the skill into your agent workflow before requesting a session.
                     </p>

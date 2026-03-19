@@ -6,6 +6,9 @@ description: Interact with the Nova wallet portal through the deployed app or lo
 # Agent Interaction
 
 Use this skill when Codex needs to operate the wallet app over `https://polkadot-solidity-hackathon.vercel.app`.
+The canonical installed copy now lives at:
+
+- `https://github.com/proofoftofu/polkadot-solidity-hackathon/tree/main/skills/agent-interaction`
 
 If the current sandbox blocks outbound network access to the deployed app or localhost, ask for permission before retrying the request outside the sandbox.
 
