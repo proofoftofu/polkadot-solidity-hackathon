@@ -437,7 +437,12 @@ async function ensureDispatcher(state, wallet, fallbackDispatcherAddress, option
   }
 
   const requiresDerivedFunding = options.fundDerived === true;
-  if (!dispatcherMatchesDeployment && wallet.dispatcherAddress && wallet.dispatcherPreparedAt && (!requiresDerivedFunding || wallet.dispatcherDerivedPreparedAt)) {
+  if (
+    !requiresDerivedFunding
+    && !dispatcherMatchesDeployment
+    && wallet.dispatcherAddress
+    && wallet.dispatcherPreparedAt
+  ) {
     logApprovalStep("ensureDispatcher:cached", {
       dispatcherAddress: wallet.dispatcherAddress,
       dispatcherPreparedAt: wallet.dispatcherPreparedAt,
