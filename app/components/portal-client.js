@@ -420,20 +420,9 @@ export default function PortalClient({ initialState }) {
         }
         const request = payload.request;
         if (request.status === "approved" && request.sessionId) {
-          let sessionPayload = null;
-          try {
-            const ownerWallet = await ensureLocalOwnerWallet();
-            const challenge = `agent-wallet:session:${request.sessionId}:owner:${request.userId}`;
-            const signature = await signOwnerChallenge(ownerWallet, challenge);
-            sessionPayload = await requestJson(
-              `/agent/sessions/${request.sessionId}?ownerAddress=${encodeURIComponent(request.userId)}&challenge=${encodeURIComponent(challenge)}&signature=${encodeURIComponent(signature)}`
-            );
-          } catch (error) {
-            if (error.message.includes("Session not found")) {
-              return;
-            }
-            throw error;
-          }
+          const sessionPayload = await requestJson(
+            `/agent/sessions/${request.sessionId}?ownerAddress=${encodeURIComponent(request.userId)}`
+          );
           appendLog("info", `[DEMO] Approval confirmed for ${request.id}. Session ${request.sessionId} is ready for transfer.`);
           upsertDemoSession(request.userId, {
             ownerAddress: request.userId,

@@ -47,6 +47,18 @@ The app exposes:
 - `POST /api/bundler/send-userop`
 - `GET /api/state`
 
+The supported end-to-end flow is the same one used by the local browser demo, but limited to one transaction shape:
+
+1. create a request with `ownerAddress` and `sessionPublicKey`
+2. wait for that exact owner request to be approved
+3. resolve the approved session with the same `ownerAddress`
+4. prepare and submit bootstrap through `POST /agent/executions`
+5. prepare and submit live session execution through `POST /agent/executions`
+
+Do not switch to a different owner namespace or a different request/session pair mid-flow.
+Do not reconstruct session payloads, call data, or XCM parameters yourself when the backend already returned them.
+This skill only supports the PAS transfer demo from Polkadot Hub Testnet to People Chain Paseo.
+
 ## Reuse the current session first
 
 Before creating a new request, check whether a still-valid session key already exists for the owner in `.agent-session-keys.json`.
@@ -75,10 +87,11 @@ Reuse only when all of the following are true:
 - the session is not expired or revoked
 
 If any of those do not match, create a new request with a new session public key.
+Do not reuse an old approved session if the approved request was for a different session public key or a different transfer shape.
 
 ## Create the request
 
-Generate a session key locally only when there is no reusable saved record. Keep the private key secret.
+Generate a session key locally only when there is no reusable saved record for this exact owner and transfer shape. Keep the private key secret.
 
 For existing owners, the backend now handles deployed-wallet reuse, validator rotation, and the live wallet nonce. Do not assume a fresh owner is required.
 
@@ -89,7 +102,10 @@ But the session key rule is strict:
 
 The `ownerAddress` sent in `POST /agent/requests` is authoritative. The portal approval must approve that same owner address, and the app now enforces that.
 
+The agent must be given `ownerAddress` by the caller. Do not assume the agent can discover it from browser localStorage or any other client-side state.
+
 Create exactly one approval request for exactly one typed XCM action.
+The only supported action is the PAS transfer demo. Do not use this skill for other XCM routes or other beneficiaries.
 
 Example:
 
@@ -238,15 +254,27 @@ The response should include the submitted execution with `hubTxHash` and `userOp
 
 Keep the stored session key after success. It remains reusable until `expiresAt`, unless the user revokes or replaces it.
 
-## Alternative bundler API
+## Match the browser demo
 
-The same signing flow is exposed directly through:
+The agent flow must match the local browser demo exactly:
 
-- prepare bootstrap: `POST /api/bundler/send-userop` with `{ "kind":"bootstrap", "sessionId":"...", "prepareOnly":true }`
-- submit bootstrap: same route with `{ "kind":"bootstrap", "sessionId":"...", "ownerSignature":"..." }`
-  - for deployed wallets this may execute the owner-install path directly and return `kind = "owner-install"`
-- prepare session: `POST /api/bundler/send-userop` with `{ "kind":"session", "sessionId":"...", "prepareOnly":true }`
-- submit session: same route with `{ "kind":"session", "sessionId":"...", "sessionSignature":"...", "signerAddress":"..." }`
+- request payload:
+  - `actionType: "execute"`
+  - `targetChain: "people-paseo"`
+  - `ownerAddress: "<caller-provided-owner-address>"`
+  - `sessionPublicKey: "<agent-session-public-key>"`
+  - `summary: "Send PAS from Polkadot Hub Testnet to People Chain Paseo"`
+  - `value: "0"`
+  - `program.transferAmount: "10000000000"`
+  - `program.beneficiary: "0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48"`
+- approval should be read back from `/agent/requests/<request-id>?ownerAddress=...`
+- session resolution must use `/agent/sessions/<session-id>?ownerAddress=...`
+- bootstrap and live execution must come from `/agent/executions`
+- the session signature must be made from `prepared.payloadHash` returned by the backend
+- the agent must not invent a different XCM payload or different beneficiary/amount when running the demo flow
+- if the backend returns a prepared payload that differs from the demo values above, stop and treat that as a mismatch rather than modifying the payload locally
+
+If the browser demo works and the skill does not, treat that as a bug in the skill instructions or the agent-side sequence, not as permission to change the payload shape.
 
 ## Debug
 
@@ -262,5 +290,6 @@ When the flow stalls, inspect the Next.js server logs. The app now logs request 
 - Never continue after rejection.
 - Never expose sensitive session material in the response.
 - Never post owner or session private keys to the app API.
-- The owner address to use is the request `ownerAddress` / `userId`, not an unrelated portal default wallet address.
+- The owner address to use is the request `ownerAddress`, not an unrelated portal default wallet address.
+- Never use `POST /api/bundler/send-userop` for the demo path unless you are debugging a backend issue.
 - Prefer `http://127.0.0.1:3000` unless the user says otherwise.
