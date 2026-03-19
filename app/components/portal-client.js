@@ -594,7 +594,7 @@ export default function PortalClient({ initialState }) {
 
   const reject = (id) =>
     submit(`reject-${id}`, `Rejecting ${id}`, async () => {
-      await requestJson(`/api/requests/${id}/reject`, { method: "POST" });
+      await requestJson(`/api/requests/${id}/reject?ownerAddress=${encodeURIComponent(ownerAddress)}`, { method: "POST" });
     });
 
   const initiateDemoAgent = () =>
@@ -724,7 +724,7 @@ export default function PortalClient({ initialState }) {
 
   const removeSession = (session) =>
     submit(`remove-session-${session.id}`, `Removing ${session.id}`, async () => {
-      await requestJson(`/api/sessions/${session.id}`, { method: "DELETE" });
+      await requestJson(`/api/sessions/${session.id}?ownerAddress=${encodeURIComponent(session.ownerAddress)}`, { method: "DELETE" });
       removeSessionPosition(session.id);
       if (demoContext?.sessionId === session.id) {
         setDemoContext((current) => current ? { ...current, sessionId: null, status: "idle" } : current);

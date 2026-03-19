@@ -608,17 +608,14 @@ export async function getRequestById(id, ownerAddress) {
   return request;
 }
 
-export async function rejectRequest(id) {
-  const state = await readOwnerState();
+export async function rejectRequest(id, ownerAddress) {
+  const state = await readOwnerState(ownerAddress);
   const request = state.requests.find((entry) => entry.id === id);
   if (!request) {
     throw new Error("Request not found");
   }
-  if (request.status !== "pending") {
-    throw new Error(`Request is already ${request.status}`);
-  }
-  request.status = "rejected";
-  request.updatedAt = nowIso();
+  const requestIndex = state.requests.findIndex((entry) => entry.id === id);
+  state.requests.splice(requestIndex, 1);
   await writeOwnerState(request.userId, state);
   return request;
 }
