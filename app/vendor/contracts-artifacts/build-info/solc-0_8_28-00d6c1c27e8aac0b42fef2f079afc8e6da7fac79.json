@@ -1,0 +1,42 @@
+{
+  "_format": "hh3-sol-build-info-1",
+  "id": "solc-0_8_28-00d6c1c27e8aac0b42fef2f079afc8e6da7fac79",
+  "solcVersion": "0.8.28",
+  "solcLongVersion": "0.8.34+commit.80d5c536",
+  "userSourceNameMap": {
+    "contracts/CrossChainDispatcher.sol": "project/contracts/CrossChainDispatcher.sol",
+    "contracts/mocks/MockTarget.sol": "project/contracts/mocks/MockTarget.sol"
+  },
+  "input": {
+    "language": "Solidity",
+    "settings": {
+      "evmVersion": "cancun",
+      "outputSelection": {
+        "*": {
+          "": [
+            "ast"
+          ],
+          "*": [
+            "abi",
+            "evm.bytecode",
+            "evm.deployedBytecode",
+            "evm.methodIdentifiers",
+            "metadata"
+          ]
+        }
+      },
+      "remappings": []
+    },
+    "sources": {
+      "project/contracts/CrossChainDispatcher.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.28;\n\nimport \"./interfaces/IXcm.sol\";\n\ncontract CrossChainDispatcher {\n    error NotOwner();\n    error UnsupportedDestination();\n    error UnsupportedReceiver();\n    error MessageVersionUnset();\n    error EmptyEncodedMessage();\n\n    struct RemoteCall {\n        uint256 destinationChainId;\n        address receiver;\n        address target;\n        uint256 value;\n        bytes callData;\n        bytes32 requestId;\n    }\n\n    address public immutable owner;\n    IXcm public immutable xcm;\n    bytes public destination;\n    bytes public messagePrefix;\n    uint256 public immutable supportedDestinationChainId;\n\n    mapping(address receiver => bool allowed) public allowedReceivers;\n\n    event ReceiverAllowed(address indexed receiver, bool allowed);\n    event DestinationUpdated(bytes destination);\n    event MessagePrefixUpdated(bytes messagePrefix);\n    event CrossChainDispatchQueued(\n        uint256 indexed destinationChainId,\n        address indexed receiver,\n        address indexed target,\n        bytes32 requestId,\n        bytes message\n    );\n    event RawXcmDispatched(address indexed target, bytes32 indexed requestId, bytes destination, bytes message);\n    event RawXcmExecuted(bytes32 indexed requestId, bytes message, uint64 refTime, uint64 proofSize);\n\n    receive() external payable {}\n\n    constructor(address owner_, address xcmPrecompileAddress, uint256 destinationChainId_, bytes memory destination_) {\n        owner = owner_;\n        xcm = IXcm(xcmPrecompileAddress);\n        supportedDestinationChainId = destinationChainId_;\n        destination = destination_;\n    }\n\n    modifier onlyOwner() {\n        if (msg.sender != owner) {\n            revert NotOwner();\n        }\n        _;\n    }\n\n    function setDestination(bytes calldata destination_) external onlyOwner {\n        destination = destination_;\n        emit DestinationUpdated(destination_);\n    }\n\n    function setMessagePrefix(bytes calldata messagePrefix_) external onlyOwner {\n        messagePrefix = messagePrefix_;\n        emit MessagePrefixUpdated(messagePrefix_);\n    }\n\n    function setAllowedReceiver(address receiver, bool allowed) external onlyOwner {\n        allowedReceivers[receiver] = allowed;\n        emit ReceiverAllowed(receiver, allowed);\n    }\n\n    function estimateDispatchWeight(RemoteCall calldata remoteCall) external view returns (IXcm.Weight memory) {\n        return xcm.weighMessage(_buildMessage(remoteCall));\n    }\n\n    function estimateEncodedMessageWeight(bytes calldata message) external view returns (IXcm.Weight memory) {\n        if (message.length == 0) {\n            revert EmptyEncodedMessage();\n        }\n        return xcm.weighMessage(message);\n    }\n\n    function dispatchRemoteCall(RemoteCall calldata remoteCall) external onlyOwner {\n        if (remoteCall.destinationChainId != supportedDestinationChainId) {\n            revert UnsupportedDestination();\n        }\n        if (!allowedReceivers[remoteCall.receiver]) {\n            revert UnsupportedReceiver();\n        }\n        bytes memory message = _buildMessage(remoteCall);\n        xcm.send(destination, message);\n        emit CrossChainDispatchQueued(\n            remoteCall.destinationChainId, remoteCall.receiver, remoteCall.target, remoteCall.requestId, message\n        );\n    }\n\n    function dispatchEncodedMessage(address target, bytes32 requestId, bytes calldata encodedMessage) external onlyOwner {\n        if (!allowedReceivers[target]) {\n            revert UnsupportedReceiver();\n        }\n        if (encodedMessage.length == 0) {\n            revert EmptyEncodedMessage();\n        }\n\n        xcm.send(destination, encodedMessage);\n        emit RawXcmDispatched(target, requestId, destination, encodedMessage);\n    }\n\n    function executeEncodedMessage(bytes32 requestId, bytes calldata encodedMessage, IXcm.Weight calldata weight)\n        external\n        onlyOwner\n    {\n        if (encodedMessage.length == 0) {\n            revert EmptyEncodedMessage();\n        }\n\n        xcm.execute(encodedMessage, weight);\n        emit RawXcmExecuted(requestId, encodedMessage, weight.refTime, weight.proofSize);\n    }\n\n    function _buildMessage(RemoteCall calldata remoteCall) internal view returns (bytes memory) {\n        if (messagePrefix.length == 0) {\n            revert MessageVersionUnset();\n        }\n        return abi.encode(\n            messagePrefix,\n            remoteCall.receiver,\n            abi.encodeWithSignature(\n                \"receiveCrossChainCall(address,address,uint256,bytes,bytes32)\",\n                address(this),\n                remoteCall.target,\n                remoteCall.value,\n                remoteCall.callData,\n                remoteCall.requestId\n            )\n        );\n    }\n}\n"
+      },
+      "project/contracts/interfaces/IXcm.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.28;\n\naddress constant XCM_PRECOMPILE_ADDRESS = address(0xA0000);\n\ninterface IXcm {\n    struct Weight {\n        uint64 refTime;\n        uint64 proofSize;\n    }\n\n    function execute(bytes calldata message, Weight calldata weight) external;\n\n    function send(bytes calldata destination, bytes calldata message) external;\n\n    function weighMessage(bytes calldata message) external view returns (Weight memory weight);\n}\n"
+      },
+      "project/contracts/mocks/MockTarget.sol": {
+        "content": "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.28;\n\ncontract MockTarget {\n    uint256 public totalAmountIn;\n    address public lastRecipient;\n    bytes32 public lastMemo;\n    bytes32 public lastRequestId;\n    address public lastCaller;\n\n    event SwapExecuted(address indexed caller, uint256 amountIn, uint256 newTotal);\n    event Swept(address indexed recipient);\n    event MemoRecorded(bytes32 indexed memo);\n    event RemoteExecutionRecorded(address indexed caller, bytes32 indexed requestId, bytes32 indexed memo);\n\n    function swapExactInput(uint256 amountIn) external returns (uint256 amountOut) {\n        totalAmountIn += amountIn;\n        emit SwapExecuted(msg.sender, amountIn, totalAmountIn);\n        return amountIn * 2;\n    }\n\n    function sweep(address recipient) external {\n        lastRecipient = recipient;\n        emit Swept(recipient);\n    }\n\n    function recordMemo(bytes32 memo) external {\n        lastCaller = msg.sender;\n        lastMemo = memo;\n        emit MemoRecorded(memo);\n    }\n\n    function recordRemoteExecution(bytes32 requestId, bytes32 memo) external {\n        lastCaller = msg.sender;\n        lastRequestId = requestId;\n        lastMemo = memo;\n        emit RemoteExecutionRecorded(msg.sender, requestId, memo);\n    }\n}\n"
+      }
+    }
+  }
+}

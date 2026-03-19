@@ -14,10 +14,10 @@ import {
 import { POLKADOT_HUB_CHAIN_ID } from "./constants.js";
 import { getEnv } from "./server-env.js";
 
-const CONTRACTS_ROOT = path.join(process.cwd(), "..", "contracts");
-const DEPLOYMENTS_ROOT = path.join(CONTRACTS_ROOT, "deployments");
+const VENDORED_CONTRACTS_ROOT = path.join(process.cwd(), "vendor");
+const DEPLOYMENTS_ROOT = path.join(VENDORED_CONTRACTS_ROOT, "contracts-deployments");
 const ABI_ROOT = path.join(DEPLOYMENTS_ROOT, "abi");
-const ARTIFACTS_ROOT = path.join(CONTRACTS_ROOT, "artifacts", "contracts");
+const ARTIFACTS_ROOT = path.join(VENDORED_CONTRACTS_ROOT, "contracts-artifacts", "contracts");
 
 let cache;
 let walletArtifactCache;

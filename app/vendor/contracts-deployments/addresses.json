@@ -1,0 +1,17 @@
+{
+  "polkadotTestnet": {
+    "entryPoint": "0x2E814359392501198DE2838De4b522AA0a8ff980",
+    "walletFactory": "0x0b595754A5c5bb2169062F3d62b2F5Ca1eCa003F",
+    "sessionKeyValidatorModule": "0xd9ABfE2b3fca77faE80318f13655e326a06F915d",
+    "executionModule": "0x201328bde460d52a8170E07e7371EDEf4928f2a1",
+    "sponsoredExecutionPaymaster": "0x44440F9cf19A591B1d44490E5a29418e49Be68E8",
+    "crossChainDispatcher": "0x0A2dC46801aA30A4AABfB5e88b7Baa614dFd59e2",
+    "xcmPrecompile": "0x00000000000000000000000000000000000a0000"
+  },
+  "peoplePaseo": {
+    "network": "peoplePaseo",
+    "paraId": 1004,
+    "beneficiary": "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+    "beneficiarySs58": "15oF4uVJwmo4TdGW7VfQxNLavjCXviqxT9S1MgbjMNHr6Sp5"
+  }
+}

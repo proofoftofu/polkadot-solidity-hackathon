@@ -1,0 +1,9 @@
+{
+  "network": "moonbaseAlpha",
+  "deployer": "0x0Bc298a4a0a205875F5Ae3B19506669c55B38d01",
+  "chainId": 1287,
+  "contracts": {
+    "crossChainTarget": "0x24848EfF870f5cEe98B4410e4624CB97f4ecAE4A",
+    "trustedHubDispatcher": "0x2479CF332cE90b55EC8df97a8AD92b266f5AdA57"
+  }
+}
