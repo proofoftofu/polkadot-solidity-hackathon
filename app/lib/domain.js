@@ -30,8 +30,8 @@ import { prepareWalletDispatcher } from "./dispatcher-runtime.js";
 import { getEnv } from "./server-env.js";
 import { makeId, readState, writeState } from "./state-store.js";
 
-const ENABLE_CHAIN_READS = process.env.APP_ENABLE_CHAIN_READS !== "false";
-const ENABLE_CHAIN_SUBMISSION = process.env.APP_ENABLE_CHAIN_SUBMISSION === "true";
+const ENABLE_CHAIN_READS = true;
+const ENABLE_CHAIN_SUBMISSION = true;
 const CHAIN_READ_ATTEMPTS = 3;
 
 function nowIso() {

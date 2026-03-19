@@ -480,9 +480,17 @@ export default function PortalClient({ initialState }) {
     appendLog("info", `[ACTION] ${label}`);
     setActiveAction(actionKey);
     try {
-      await work();
+      const result = await work();
       await refresh();
-      appendLog("info", `[NOTICE] ${label} completed.`);
+      const txHash = result?.hubTxHash ?? result?.txHash ?? result?.execution?.hubTxHash ?? result?.execution?.txHash ?? null;
+      if (txHash) {
+        appendLog("info", `[NOTICE] ${label} completed.`, {
+          href: blockscoutTxUrl(txHash),
+          linkLabel: shortHash(txHash, 8, 8)
+        });
+      } else {
+        appendLog("info", `[NOTICE] ${label} completed.`);
+      }
     } catch (error) {
       appendLog("error", `[NOTICE] ${error.message}`);
     } finally {
@@ -753,6 +761,7 @@ export default function PortalClient({ initialState }) {
         setDemoContext((current) => current ? { ...current, executionId: submitted.execution.id, status: "submitted" } : current);
       }
       await refresh();
+      return submitted.execution;
     }).catch((error) => {
       appendSessionLog(session.id, "error", `[DEMO] ${error.message}`);
       throw error;
@@ -827,6 +836,8 @@ export default function PortalClient({ initialState }) {
   };
 
   const pendingRequests = state.requests.filter((request) => request.status === "pending");
+  const activeRequestCount = pendingRequests.length;
+  const visibleRequestIndex = activeRequestCount ? Math.min(activeRequestIndex + 1, activeRequestCount) : 0;
   const activeRequest = pendingRequests.length
     ? pendingRequests[activeRequestIndex % pendingRequests.length]
     : null;
@@ -940,13 +951,13 @@ export default function PortalClient({ initialState }) {
               <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-cyan-100/65">
                 Approve session
                 <span className="ml-2 text-slate-400">
-                  {pendingRequests.length ? `${activeRequestIndex + 1} / ${pendingRequests.length}` : "0 / 0"}
+                  {pendingRequests.length ? `${visibleRequestIndex} / ${activeRequestCount}` : "0 / 0"}
                 </span>
               </p>
               <button
                 className="rounded-full border border-white/10 bg-white/8 px-4 py-2 text-sm font-medium text-slate-200 transition hover:-translate-y-0.5 disabled:opacity-40"
-                disabled={pendingRequests.length <= 1}
-                onClick={() => setActiveRequestIndex((current) => current + 1)}
+                disabled={activeRequestIndex >= activeRequestCount - 1}
+                onClick={() => setActiveRequestIndex((current) => Math.min(current + 1, Math.max(activeRequestCount - 1, 0)))}
                 type="button"
               >
                 Next
