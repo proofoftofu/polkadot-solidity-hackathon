@@ -290,6 +290,7 @@ function buildDefaultSessionPosition(sessionId, index) {
 
 export default function PortalClient({ initialState }) {
   const [state, setState] = useState(initialState);
+  const [showLanding, setShowLanding] = useState(true);
   const [ownerAddress, setOwnerAddress] = useState(initialState.wallet.ownerAddress);
   const [activeAction, setActiveAction] = useState(null);
   const [controlWindowOpen, setControlWindowOpen] = useState(false);
@@ -875,6 +876,112 @@ export default function PortalClient({ initialState }) {
   return (
     <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(64,182,255,0.18),_transparent_18%),linear-gradient(180deg,_#06111b_0%,_#081723_34%,_#0d1d2b_100%)] px-4 py-4 text-white md:px-8 md:py-6">
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(173,216,255,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(173,216,255,0.05)_1px,transparent_1px)] bg-[size:72px_72px]" />
+      {showLanding ? (
+        <div className="relative mx-auto flex min-h-[calc(100vh-2rem)] w-full max-w-[1600px] items-center justify-center">
+          <div className="relative w-full overflow-hidden rounded-[2.6rem] border border-white/10 bg-[radial-gradient(circle_at_50%_18%,rgba(113,214,255,0.22),transparent_20%),radial-gradient(circle_at_bottom_right,rgba(84,184,255,0.14),transparent_24%),linear-gradient(180deg,rgba(10,21,33,0.96),rgba(8,17,27,0.98))] px-6 py-10 shadow-[0_28px_100px_rgba(0,0,0,0.38)] backdrop-blur-2xl md:px-10 md:py-12">
+            <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(173,216,255,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(173,216,255,0.05)_1px,transparent_1px)] bg-[size:72px_72px]" />
+            <div className="relative grid items-center gap-10 lg:grid-cols-[1.05fr_0.95fr]">
+              <div className="max-w-2xl text-left">
+                <p className="text-[0.72rem] font-black uppercase tracking-[0.28em] text-cyan-100/65">
+                  AGENT HUB ON POLKADOT HUB
+                </p>
+                <h1 className="mt-4 text-5xl font-semibold leading-[1.02] tracking-[0.02em] text-white md:text-7xl">
+                  Nova
+                </h1>
+                <p className="mt-5 max-w-2xl text-lg leading-8 text-slate-300 md:text-xl">
+                  Delegation for the Polkadot cross-chain stack.
+                </p>
+
+                <div className="mt-8 grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-[1.4rem] border border-white/10 bg-white/6 p-4">
+                    <p className="text-[0.62rem] font-black uppercase tracking-[0.18em] text-cyan-100/70">
+                      Session control
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-slate-300">
+                      Limit the allowed XCM operations, assets, and target chains per session.
+                    </p>
+                  </div>
+                  <div className="rounded-[1.4rem] border border-white/10 bg-white/6 p-4">
+                    <p className="text-[0.62rem] font-black uppercase tracking-[0.18em] text-cyan-100/70">
+                      Account abstraction
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-slate-300">
+                      Use ERC4337 and ERC7579 session keys with an account abstraction wallet instead of exposing the root wallet.
+                    </p>
+                  </div>
+                  <div className="rounded-[1.4rem] border border-white/10 bg-white/6 p-4">
+                    <p className="text-[0.62rem] font-black uppercase tracking-[0.18em] text-cyan-100/70">
+                      Cross-chain module
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-slate-300">
+                      A dispatch module bridges the wallet session to the supported XCM workflow.
+                    </p>
+                  </div>
+                  <div className="rounded-[1.4rem] border border-white/10 bg-white/6 p-4">
+                    <p className="text-[0.62rem] font-black uppercase tracking-[0.18em] text-cyan-100/70">
+                      Security plus usability
+                    </p>
+                    <p className="mt-2 text-sm leading-6 text-slate-300">
+                      Users delegate the right permissions without giving up practical automation.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-8 flex flex-wrap items-center gap-3">
+                  <button
+                    className="rounded-full border border-cyan-300/30 bg-cyan-300/14 px-8 py-4 text-base font-semibold text-cyan-50 transition hover:-translate-y-0.5 hover:bg-cyan-300/18"
+                    onClick={() => setShowLanding(false)}
+                    type="button"
+                  >
+                    Start
+                  </button>
+                  <button
+                    className="rounded-full border border-white/10 bg-white/8 px-7 py-4 text-base font-semibold text-slate-100 transition hover:-translate-y-0.5 hover:bg-white/12"
+                    onClick={() => setShowLanding(false)}
+                    type="button"
+                  >
+                    Demo
+                  </button>
+                  <button
+                    className="rounded-full border border-white/10 bg-white/8 px-7 py-4 text-base font-semibold text-slate-100 transition hover:-translate-y-0.5 hover:bg-white/12"
+                    onClick={() => window.open("https://docs.polkadot.com/", "_blank", "noreferrer")}
+                    type="button"
+                  >
+                    Docs
+                  </button>
+                </div>
+              </div>
+
+              <div className="relative flex justify-center lg:justify-end">
+                <div className="relative h-[420px] w-[420px] max-w-full">
+                  <div className="pointer-events-none absolute inset-0 rounded-full border border-cyan-300/15 bg-[radial-gradient(circle_at_50%_40%,rgba(255,255,255,0.18),rgba(255,255,255,0.05)_56%,rgba(255,255,255,0.02))] shadow-[0_0_120px_rgba(56,189,248,0.12)]" />
+                  <div className="pointer-events-none absolute inset-[42px] rounded-full border border-white/10 bg-[radial-gradient(circle_at_50%_34%,rgba(180,228,255,0.24),rgba(255,255,255,0.04)_60%,rgba(255,255,255,0.01))] shadow-[inset_0_0_80px_rgba(255,255,255,0.06)]" />
+                  <div className="agent-sphere absolute left-1/2 top-[72px] h-[104px] w-[104px] -translate-x-1/2 rounded-full border border-cyan-200/20 bg-[radial-gradient(circle_at_50%_30%,rgba(255,255,255,0.9),rgba(111,214,255,0.16))] shadow-[0_0_90px_rgba(56,189,248,0.18)]" />
+                  <div className="absolute inset-0 rounded-full border border-cyan-300/20" />
+                  <div className="absolute left-1/2 top-1/2 w-[250px] -translate-x-1/2 -translate-y-[12px] rounded-[2rem] border border-white/10 bg-white/6 px-6 py-5 text-center backdrop-blur-xl">
+                    <p className="text-[0.7rem] font-black uppercase tracking-[0.3em] text-cyan-100/65">
+                      AI Agent
+                    </p>
+                    <p className="mt-2 text-4xl font-semibold tracking-[0.16em] text-white">
+                      NOVA
+                    </p>
+                  </div>
+                  <div className="absolute left-1/2 top-[292px] -translate-x-1/2">
+                    <div className="flex flex-col items-center gap-3">
+                      <span className="rounded-full border border-white/10 bg-white/8 px-4 py-2 text-[0.7rem] uppercase tracking-[0.22em] text-slate-200">
+                        Session keys
+                      </span>
+                      <span className="rounded-full border border-white/10 bg-white/8 px-4 py-2 text-[0.7rem] uppercase tracking-[0.22em] text-slate-200">
+                        XCM permissions
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
       <div className="relative mx-auto flex w-full max-w-7xl flex-col gap-5">
         <header className="flex items-center justify-between rounded-[1.6rem] border border-white/10 bg-white/6 px-4 py-3 shadow-[0_20px_80px_rgba(0,0,0,0.25)] backdrop-blur-xl md:px-5">
           <div className="flex items-center gap-3">
@@ -1419,6 +1526,7 @@ export default function PortalClient({ initialState }) {
         ) : null}
 
       </div>
+      )}
     </main>
   );
 }
