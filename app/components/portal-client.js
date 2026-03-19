@@ -841,12 +841,11 @@ export default function PortalClient({ initialState }) {
       <div className="relative mx-auto flex w-full max-w-7xl flex-col gap-5">
         <header className="flex items-center justify-between rounded-[1.6rem] border border-white/10 bg-white/6 px-4 py-3 shadow-[0_20px_80px_rgba(0,0,0,0.25)] backdrop-blur-xl md:px-5">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-2xl border border-cyan-300/30 bg-cyan-300/10 shadow-[0_0_40px_rgba(56,189,248,0.18)]" />
             <div>
               <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-cyan-100/70">
                 AI Agent Session Layer
               </p>
-              <h1 className="mt-1 text-lg font-semibold tracking-[0.04em] md:text-xl">NOVA / Wallet Delegation Console</h1>
+              <h1 className="mt-1 text-lg font-semibold tracking-[0.04em] md:text-xl">NOVA / Wallet Delegation Hub</h1>
             </div>
           </div>
 
@@ -902,7 +901,7 @@ export default function PortalClient({ initialState }) {
               {stageSessions.slice(0, 4).map((session, index) => (
                 <button
                   key={session.id}
-                  className="absolute w-[172px] touch-none rounded-[1.4rem] border border-white/12 bg-white/9 p-4 text-left shadow-[0_16px_56px_rgba(2,8,18,0.36)] backdrop-blur-xl transition hover:border-cyan-300/30 hover:bg-white/12"
+                  className="absolute w-[220px] touch-none rounded-[1.4rem] border border-white/12 bg-white/9 p-4 text-left shadow-[0_16px_56px_rgba(2,8,18,0.36)] backdrop-blur-xl transition hover:border-cyan-300/30 hover:bg-white/12"
                   data-testid={`session-chip-${session.id}`}
                   onPointerCancel={(event) => endSessionDrag(event, session)}
                   onPointerDown={(event) => startSessionDrag(event, session, index)}
@@ -918,11 +917,11 @@ export default function PortalClient({ initialState }) {
                     <strong className="text-xs font-semibold uppercase tracking-[0.16em] text-cyan-50">
                       {session.id.replace("session_", "").slice(0, 10)}
                     </strong>
-                    <span className={`rounded-full border px-2 py-0.5 text-[0.58rem] font-semibold uppercase tracking-[0.16em] ${pillTone(session.status)}`}>
+                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[0.54rem] font-semibold uppercase tracking-[0.12em] ${pillTone(session.status)}`}>
                       {visibleSessionStatus(session.status)}
                     </span>
                   </div>
-                  <p className="mt-3 text-sm leading-6 text-slate-200">
+                  <p className="mt-3 break-all text-sm leading-6 text-slate-200">
                     {shortHash(session.sessionPublicKey, 8, 8)}
                   </p>
                   <p className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-400">
@@ -1080,7 +1079,7 @@ export default function PortalClient({ initialState }) {
         {selectedSession ? (
           <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/55 px-4 py-6" onClick={() => setSessionModalId(null)} role="presentation">
             <div
-              className="max-h-[85vh] w-full max-w-3xl overflow-auto rounded-[1.9rem] border border-white/12 bg-[linear-gradient(180deg,rgba(11,23,34,0.92),rgba(8,17,27,0.96))] p-6 shadow-[0_28px_100px_rgba(0,0,0,0.42)] backdrop-blur-2xl"
+              className="max-h-[85vh] w-full max-w-4xl overflow-auto rounded-[1.9rem] border border-white/12 bg-[linear-gradient(180deg,rgba(11,23,34,0.92),rgba(8,17,27,0.96))] p-6 shadow-[0_28px_100px_rgba(0,0,0,0.42)] backdrop-blur-2xl"
               data-testid={`session-modal-${selectedSession.id}`}
               onClick={(event) => event.stopPropagation()}
             >
@@ -1214,17 +1213,12 @@ export default function PortalClient({ initialState }) {
         {controlWindowOpen ? (
           <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/55 px-4 py-6" onClick={() => setControlWindowOpen(false)} role="presentation">
             <div
-              className="max-h-[88vh] w-full max-w-4xl overflow-auto rounded-[1.9rem] border border-white/12 bg-[linear-gradient(180deg,rgba(11,23,34,0.9),rgba(7,14,23,0.96))] shadow-[0_28px_100px_rgba(0,0,0,0.42)] backdrop-blur-2xl"
+              className="max-h-[84vh] w-full max-w-4xl overflow-auto rounded-[1.9rem] border border-white/12 bg-[linear-gradient(180deg,rgba(11,23,34,0.9),rgba(7,14,23,0.96))] shadow-[0_28px_100px_rgba(0,0,0,0.42)] backdrop-blur-2xl"
               onClick={(event) => event.stopPropagation()}
             >
               <div className="flex items-center justify-between border-b border-white/10 px-5 py-3">
-                <div className="flex items-center gap-2">
-                  <span className="h-3 w-3 rounded-full bg-rose-400/90" />
-                  <span className="h-3 w-3 rounded-full bg-amber-300/90" />
-                  <span className="h-3 w-3 rounded-full bg-emerald-400/90" />
-                </div>
                 <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-400">
-                  Control Window
+                  Wallet Delegation Hub
                 </p>
                 <button
                   className="rounded-full border border-white/10 bg-white/8 px-4 py-2 text-sm font-semibold text-slate-100 transition hover:bg-white/12"
@@ -1314,7 +1308,6 @@ export default function PortalClient({ initialState }) {
                       </button>
                     </section>
                 </div>
-                <div className="mt-5 grid gap-3 rounded-[1.4rem] border border-white/10 bg-black/10 p-4 text-sm text-slate-300" />
               </div>
             </div>
           </div>
