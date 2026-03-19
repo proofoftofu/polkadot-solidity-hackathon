@@ -54,22 +54,24 @@ function buildStateEventEntries(state) {
   const entries = [];
 
   for (const request of state.requests) {
-    const visibleStatus = request.status === "pending" ? "requested" : request.status;
+    if (request.status !== "pending") {
+      continue;
+    }
     entries.push({
       key: `request:${request.id}:${request.status}`,
-      tone: request.status === "rejected" ? "error" : "info",
-      text: `[REQUEST:${visibleStatus.toUpperCase()}] ${request.id} · ${shortHash(request.userId, 6, 6)}`
+      tone: "info",
+      text: `[REQUEST:REQUESTED] ${request.id} · ${shortHash(request.userId, 6, 6)}`
     });
   }
 
   for (const session of state.sessions) {
-    const visibleStatus = session.status === "approved" || session.status === "active"
-      ? "approved"
-      : session.status;
+    if (session.status !== "active") {
+      continue;
+    }
     entries.push({
       key: `session:${session.id}:${session.status}`,
       tone: "info",
-      text: `[SESSION:${visibleStatus.toUpperCase()}] ${session.id} · ${shortHash(session.sessionPublicKey, 6, 6)}`
+      text: `[SESSION:ACTIVE] ${session.id} · ${shortHash(session.sessionPublicKey, 6, 6)}`
     });
   }
 
@@ -287,6 +289,7 @@ export default function PortalClient({ initialState }) {
   const [demoContext, setDemoContext] = useState(null);
   const [sessionPositions, setSessionPositions] = useState({});
   const seenEventKeysRef = useRef(new Set(buildStateEventEntries(initialState).map((entry) => entry.key)));
+  const skipNextStateLogRef = useRef(true);
   const stageRef = useRef(null);
   const dragStateRef = useRef(null);
   const ownerAddressRef = useRef(ownerAddress);
@@ -375,6 +378,12 @@ export default function PortalClient({ initialState }) {
   }, [ownerAddress]);
 
   useEffect(() => {
+    if (skipNextStateLogRef.current) {
+      skipNextStateLogRef.current = false;
+      seenEventKeysRef.current = new Set(buildStateEventEntries(state).map((entry) => entry.key));
+      return;
+    }
+
     const nextEntries = [];
     for (const entry of buildStateEventEntries(state)) {
       if (seenEventKeysRef.current.has(entry.key)) {
@@ -489,6 +498,7 @@ export default function PortalClient({ initialState }) {
       body: JSON.stringify({
         requestId: session.requestId,
         sessionId: session.id,
+        ownerAddress: session.ownerAddress,
         live: true,
         prepare: "bootstrap"
       })
@@ -502,6 +512,7 @@ export default function PortalClient({ initialState }) {
       body: JSON.stringify({
         requestId: session.requestId,
         sessionId: session.id,
+        ownerAddress: session.ownerAddress,
         live: true,
         submit: "bootstrap",
         ownerSignature
@@ -600,12 +611,14 @@ export default function PortalClient({ initialState }) {
   const initiateDemoAgent = () =>
     submit("initiate-demo", "Initiating demo agent", async () => {
       appendLog("info", "[DEMO] Booting remote agent terminal.");
+      const ownerWallet = await ensureLocalOwnerWallet();
+      const demoOwnerAddress = ownerWallet.address;
 
-      let demoSession = getReusableDemoSession(ownerAddress);
+      let demoSession = getReusableDemoSession(demoOwnerAddress);
       if (!demoSession) {
         const { sessionPrivateKey, sessionPublicKey } = await createDemoSessionKeyPair();
-        demoSession = upsertDemoSession(ownerAddress, {
-          ownerAddress,
+        demoSession = upsertDemoSession(demoOwnerAddress, {
+          ownerAddress: demoOwnerAddress,
           sessionPrivateKey,
           sessionPublicKey,
           status: "generated",
@@ -622,7 +635,7 @@ export default function PortalClient({ initialState }) {
         body: JSON.stringify({
           actionType: "execute",
           targetChain: "people-paseo",
-          ownerAddress,
+          ownerAddress: demoOwnerAddress,
           sessionPublicKey: demoSession.sessionPublicKey,
           summary: EMPTY_FORM.summary,
           value: "0",
@@ -633,13 +646,13 @@ export default function PortalClient({ initialState }) {
         })
       });
 
-      upsertDemoSession(ownerAddress, {
+      upsertDemoSession(demoOwnerAddress, {
         ...demoSession,
         requestId: created.request.id,
         status: "waiting-approval"
       });
       setDemoContext({
-        ownerAddress,
+        ownerAddress: demoOwnerAddress,
         requestId: created.request.id,
         sessionId: null,
         sessionPublicKey: demoSession.sessionPublicKey,
@@ -680,6 +693,7 @@ export default function PortalClient({ initialState }) {
         body: JSON.stringify({
           requestId: latestSession.requestId,
           sessionId: latestSession.id,
+          ownerAddress: latestSession.ownerAddress,
           live: true,
           prepare: "session"
         })
@@ -697,6 +711,7 @@ export default function PortalClient({ initialState }) {
         body: JSON.stringify({
           requestId: latestSession.requestId,
           sessionId: latestSession.id,
+          ownerAddress: latestSession.ownerAddress,
           live: true,
           submit: "session",
           signerAddress: demoSession.sessionPublicKey,
