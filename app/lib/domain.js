@@ -187,6 +187,38 @@ function makeRequestId(id) {
 }
 
 function buildSessionInstallData(sessionAccountAddress, dispatcherAddress, beneficiary, maxAmount, paraId, expiresAt) {
+  const tupleValues = [
+    sessionAccountAddress,
+    stringToHex(APP_AGENT_ID, { size: 32 }),
+    POLKADOT_HUB_CHAIN_ID,
+    dispatcherAddress,
+    EXECUTE_PROGRAM_SELECTOR,
+    BigInt(Math.floor(new Date(expiresAt).getTime() / 1000)),
+    0n,
+    1,
+    maxAmount,
+    false,
+    OPERATION_KIND_XCM_PROGRAM,
+    [0],
+    [0, 2, 3, 4],
+    [paraId],
+    [beneficiary],
+    [[PAS_ASSET_ID, maxAmount]]
+  ];
+
+  console.log("[domain/approve] buildSessionInstallData", {
+    sessionAccountAddress,
+    dispatcherAddress,
+    beneficiary,
+    maxAmount: maxAmount.toString(),
+    paraId,
+    expiresAt,
+    tupleFieldCount: tupleValues.length,
+    tupleValues: tupleValues.map((value) => (
+      typeof value === "bigint" ? value.toString() : value
+    ))
+  });
+
   return encodeAbiParameters(
     [
       {
@@ -214,24 +246,7 @@ function buildSessionInstallData(sessionAccountAddress, dispatcherAddress, benef
         ]
       }
     ],
-    [[
-      sessionAccountAddress,
-      stringToHex(APP_AGENT_ID, { size: 32 }),
-      POLKADOT_HUB_CHAIN_ID,
-      dispatcherAddress,
-      EXECUTE_PROGRAM_SELECTOR,
-      BigInt(Math.floor(new Date(expiresAt).getTime() / 1000)),
-      0n,
-      1,
-      maxAmount,
-      false,
-      OPERATION_KIND_XCM_PROGRAM,
-      [0],
-      [0, 2, 3, 4],
-      [paraId],
-      [beneficiary],
-      [[PAS_ASSET_ID, maxAmount]]
-    ]]
+    [tupleValues]
   );
 }
 
