@@ -990,7 +990,6 @@ export async function executeAgentRequestWithOptions({ requestId, sessionId, own
 export async function getPortalSnapshot(ownerAddress) {
   const state = await readOwnerState(ownerAddress);
   const wallet = await ensureWallet(state, ownerAddress);
-  await writeOwnerState(ownerAddress, state);
   return {
     wallet,
     requests: state.requests,

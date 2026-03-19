@@ -53,10 +53,22 @@ The app exposes:
 The supported end-to-end flow is the same one used by the local browser demo, but limited to one transaction shape:
 
 1. create a request with `ownerAddress` and `sessionPublicKey`
-2. wait for that exact owner request to be approved
-3. resolve the approved session with the same `ownerAddress`
-4. prepare and submit bootstrap through `POST /agent/executions`
-5. prepare and submit live session execution through `POST /agent/executions`
+2. stop and let the user approve that exact request in the portal
+3. only continue after the user has approved the request in the portal
+4. resolve the approved session with the same `ownerAddress`
+5. prepare and submit the backend-required bootstrap step through `POST /agent/executions` when the session is not already active
+6. prepare and submit live session execution through `POST /agent/executions`
+
+For a fresh session, follow this exact order:
+
+1. Create one request only.
+2. Wait for the user to approve it in the portal.
+3. Resolve the approved session and check that it is `active`.
+4. If the session is not active, run bootstrap and persist activation.
+5. Call `prepare: "session"` to get the fresh payload hash.
+6. Sign the backend-provided `prepared.payloadHash` with the local session key.
+7. Call `submit: "session"` with the raw signature unchanged.
+8. If the backend returns a submitted execution, keep the session key stored for reuse.
 
 Do not switch to a different owner namespace or a different request/session pair mid-flow.
 Do not reconstruct session payloads, call data, XCM parameters, or signature wrappers yourself when the backend already returned them.
@@ -136,30 +148,26 @@ Also capture `ownerAddress`. That is the address the user is approving for.
 
 ## Wait for approval
 
-Tell the user there is a pending request in the portal. Do not continue until the request is approved.
+Tell the user there is a pending request in the portal. Do not continue until the user approves that request in the portal.
+Do not approve the request yourself from the backend or by scripting the approval route.
+The intended workflow is:
+
+1. I create the request.
+2. The user approves it in the portal.
+3. I continue with session resolution and execution.
 
 Important:
 - the owner shown on the request card must match the generated `ownerAddress`
 - the beneficiary shown in the request must match the caller-provided beneficiary wallet address
 - the portal should approve that request owner, not a different hardcoded wallet field
 
-Poll continuously with inline Node or repeated `curl`.
+Check the request status again after approval and confirm it includes a `sessionId`.
+Do not proceed on the first pending response.
+Stop only when:
 
-Preferred pattern:
-
-```bash
-node --input-type=module -e "const requestId=process.argv[1]; const baseUrl='https://polkadot-solidity-hackathon.vercel.app'; for (;;) { try { const res = await fetch(`${baseUrl}/agent/requests/${requestId}`); const body = await res.json().catch(() => ({})); if (res.ok && body.request?.status === 'approved' && body.request?.sessionId) { console.log(JSON.stringify(body, null, 2)); process.exit(0); } if (res.ok && body.request?.status === 'rejected') { console.log(JSON.stringify(body, null, 2)); process.exit(2); } console.log(JSON.stringify({ requestId, status: body.request?.status ?? 'waiting', sessionId: body.request?.sessionId ?? null })); } catch (error) { console.log(JSON.stringify({ requestId, status: 'waiting', error: error.message })); } await new Promise((resolve) => setTimeout(resolve, 5000)); }" <request-id>
-```
-
-Policy:
-
-- poll every 5 seconds by default
-- do not stop just because approval takes a while
-- continue polling across transient `404` or restart windows
-- stop only when:
-  - `status` becomes `approved` and `sessionId` exists, or
-  - `status` becomes `rejected`, or
-  - the user explicitly interrupts the flow
+- `status` becomes `approved` and `sessionId` exists
+- `status` becomes `rejected`
+- the user explicitly interrupts the flow
 
 ## Resolve the session
 
@@ -221,6 +229,13 @@ The session should now move to `active`.
 
 After bootstrap or owner-install succeeds, update `.agent-session-keys.json` with `sessionId`, `expiresAt`, and `status: active`.
 
+Important:
+
+- include `ownerAddress` on every `/agent/executions` call
+- if the backend says the session is already active or the bootstrap path is not needed, move directly to session preparation and submission
+- if `prepare: "bootstrap"` returns `owner-install`, treat that as a backend-managed owner-side step and do not try to invent alternate signing logic
+- if `POST /agent/executions` returns `Session not found`, first retry with the explicit `ownerAddress` before changing the flow
+
 ## Execute with session signature only
 
 Ask the backend for the exact session payload to sign:
@@ -231,6 +246,7 @@ curl -s https://polkadot-solidity-hackathon.vercel.app/agent/executions \
   -d '{
     "requestId":"<request-id>",
     "sessionId":"<session-id>",
+    "ownerAddress":"<owner-address>",
     "live":true,
     "prepare":"session"
   }'
@@ -258,6 +274,7 @@ curl -s https://polkadot-solidity-hackathon.vercel.app/agent/executions \
   -d '{
     "requestId":"<request-id>",
     "sessionId":"<session-id>",
+    "ownerAddress":"<owner-address>",
     "live":true,
     "submit":"session",
     "signerAddress":"<session-public-key>",
@@ -268,6 +285,20 @@ curl -s https://polkadot-solidity-hackathon.vercel.app/agent/executions \
 The response should include the submitted execution with `hubTxHash` and `userOpHash`.
 
 Keep the stored session key after success. It remains reusable until `expiresAt`, unless the user revokes or replaces it.
+
+## Fresh Session Checklist
+
+When starting a new session, do not reuse an older execution submission:
+
+- create a new request id
+- wait for that request to be approved in the portal
+- read the session back and confirm the returned `sessionId`
+- bootstrap first if the session is not `active`
+- call `prepare: "session"` again after bootstrap
+- sign the fresh `prepared.payloadHash`
+- submit the signed live transfer
+
+If the browser demo succeeds and the direct agent API path fails, prefer the browser-demo ordering above and do not “fast-forward” to submission with an older payload hash.
 
 ## Match the browser demo
 
@@ -285,6 +316,7 @@ The agent flow must match the local browser demo exactly:
 - approval should be read back from `/agent/requests/<request-id>?ownerAddress=...`
 - session resolution must use `/agent/sessions/<session-id>?ownerAddress=...`
 - bootstrap and live execution must come from `/agent/executions`
+- bootstrap calls should include `ownerAddress`, and live session prep/submission must include `ownerAddress` as well
 - the session signature must be made from `prepared.payloadHash` returned by the backend
 - the session signature must be a raw 65-byte ECDSA signature and must be submitted unchanged as a hex string
 - the agent must not invent a different XCM payload or different beneficiary/amount when running the demo flow

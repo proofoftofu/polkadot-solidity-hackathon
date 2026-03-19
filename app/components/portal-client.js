@@ -548,6 +548,25 @@ export default function PortalClient({ initialState }) {
         ownerSignature
       })
     });
+
+    let activeSession = submission?.session ?? session;
+    if (activeSession?.status !== "active") {
+      try {
+        const activated = await requestJson(`/api/sessions/${session.id}/activate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ownerAddress: normalizedOwnerAddress,
+            bootstrapTxHash: submission?.submission?.txHash ?? null
+          })
+        });
+        activeSession = activated?.session ?? activeSession;
+        appendLog("info", `[APPROVAL] Session ${session.id} activation persisted.`);
+      } catch (error) {
+        appendLog("error", `[APPROVAL] Failed to persist active session state: ${error.message}`);
+      }
+    }
+
     appendLog("info", "[APPROVAL] tx sent", {
       href: blockscoutTxUrl(submission.submission.txHash),
       linkLabel: shortHash(submission.submission.txHash, 8, 8)
@@ -560,6 +579,9 @@ export default function PortalClient({ initialState }) {
       href: blockscoutTxUrl(submission.submission.txHash),
       linkLabel: shortHash(submission.submission.txHash, 8, 8)
     });
+    if (activeSession?.status !== "active") {
+      appendLog("error", `[APPROVAL] Session ${session.id} did not become active after bootstrap.`);
+    }
   };
 
   const deployWallet = () =>
@@ -857,12 +879,16 @@ export default function PortalClient({ initialState }) {
     }
   };
 
-  const pendingRequests = state.requests.filter((request) => request.status === "pending");
+  const pendingRequests = state.requests
+    .filter((request) => request.status === "pending")
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
   const activeRequestCount = pendingRequests.length;
   const visibleRequestIndex = activeRequestCount ? Math.min(activeRequestIndex + 1, activeRequestCount) : 0;
-  const activeRequest = pendingRequests.length
-    ? pendingRequests[activeRequestIndex % pendingRequests.length]
-    : null;
+  const activeRequest = demoContext?.requestId
+    ? pendingRequests.find((request) => request.id === demoContext.requestId)
+    : pendingRequests.length
+      ? pendingRequests[activeRequestIndex % pendingRequests.length]
+      : null;
   const stageSessions = state.sessions.filter((session) => session.status === "active" || session.status === "approved");
   const selectedSession = state.sessions.find((session) => session.id === sessionModalId) ?? null;
   const consoleLines = terminalLogs;

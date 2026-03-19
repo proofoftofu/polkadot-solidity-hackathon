@@ -16,3 +16,10 @@ Nova lets a user create a session key for an account abstraction wallet, approve
 
 ## How It Is Made
 Nova is built on account abstraction with ERC4337 and IERC7579-style session and module handling. It uses a cross-chain dispatch module and XCM-based execution to route permitted actions across Polkadot Hub and People Chain. The app combines wallet deployment, session approval, validator checks, and live execution into one delegated flow.
+
+```
+can you try agent-interaction skill to make session, and then use the session to transfer PAS to people chain?
+
+ownerAddress: 0x651E61a3fD14bE0612e315e15A6EB3D9759Cb712
+beneficiary: 0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48
+```

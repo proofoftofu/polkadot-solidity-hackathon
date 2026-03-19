@@ -134,3 +134,53 @@ test("session execution can continue after the request record is gone", async ()
   assert.equal(execution.sessionId, session.id);
   assert.equal(execution.destinationChain, "people-paseo");
 });
+
+test("markSessionSubmitted activates the session when ownerAddress is provided", async () => {
+  const { createAgentRequest, approveRequest, markSessionSubmitted, getSessionById } = await import("../lib/domain.js");
+
+  const request = await createAgentRequest({
+    actionType: "execute",
+    targetChain: "people-paseo",
+    sessionPublicKey: "0x1234567890123456789012345678901234567890",
+    summary: "Transfer PAS",
+    program: {
+      transferAmount: "10000000000",
+      beneficiary: "0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48"
+    }
+  });
+
+  const session = await approveRequest(request.id);
+  const updated = await markSessionSubmitted(session.id, {
+    bootstrapTxHash: "0x" + "11".repeat(32),
+    activate: true,
+    ownerAddress: session.ownerAddress
+  }, session.ownerAddress);
+
+  assert.equal(updated.status, "active");
+
+  const persisted = await getSessionById(session.id, session.ownerAddress);
+  assert.equal(persisted.status, "active");
+  assert.equal(persisted.bootstrapTxHash, "0x" + "11".repeat(32));
+});
+
+test("getPortalSnapshot does not clobber pending requests", async () => {
+  const { createAgentRequest, getPortalSnapshot } = await import("../lib/domain.js");
+
+  const request = await createAgentRequest({
+    actionType: "execute",
+    targetChain: "people-paseo",
+    ownerAddress: "0x0Bc298a4a0a205875F5Ae3B19506669c55B38d01",
+    sessionPublicKey: "0x1234567890123456789012345678901234567890",
+    summary: "Transfer PAS",
+    program: {
+      transferAmount: "10000000000",
+      beneficiary: "0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48"
+    }
+  });
+
+  const before = await getPortalSnapshot("0x0Bc298a4a0a205875F5Ae3B19506669c55B38d01");
+  assert.ok(before.requests.some((entry) => entry.id === request.id));
+
+  const after = await getPortalSnapshot("0x0Bc298a4a0a205875F5Ae3B19506669c55B38d01");
+  assert.ok(after.requests.some((entry) => entry.id === request.id));
+});
