@@ -963,7 +963,7 @@ export default function PortalClient({ initialState }) {
                   </button>
                   <button
                     className="rounded-full border border-white/10 bg-white/8 px-7 py-4 text-base font-semibold text-slate-100 transition hover:-translate-y-0.5 hover:bg-white/12"
-                    onClick={() => setShowLanding(false)}
+                    onClick={() => window.open("https://youtu.be/u-YA3i6biiI", "_blank", "noreferrer")}
                     type="button"
                   >
                     Demo

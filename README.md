@@ -4,7 +4,7 @@
 https://polkadot-solidity-hackathon.vercel.app
 
 ## Demo
-TBD
+https://youtu.be/u-YA3i6biiI
 
 ## Vision
 Nova is an Agent Hub on Polkadot Hub for managing cross-chain actions with account abstraction and AI Agent sessions.
