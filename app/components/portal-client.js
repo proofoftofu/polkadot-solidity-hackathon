@@ -279,6 +279,7 @@ export default function PortalClient({ initialState }) {
   const [activeAction, setActiveAction] = useState(null);
   const [controlWindowOpen, setControlWindowOpen] = useState(false);
   const [sessionModalId, setSessionModalId] = useState(null);
+  const [walletPreparation, setWalletPreparation] = useState(null);
   const [activeRequestIndex, setActiveRequestIndex] = useState(0);
   const [terminalLogs, setTerminalLogs] = useState(() => [{
     id: "system-initial",
@@ -528,6 +529,7 @@ export default function PortalClient({ initialState }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ownerAddress })
       });
+      setWalletPreparation(prepared);
 
       if (prepared.preparation?.dispatcherDeployTx) {
         appendLog("info", "[WALLET] dispatcher deploy tx sent", {
@@ -1244,6 +1246,36 @@ export default function PortalClient({ initialState }) {
                             {state.wallet.deployedWalletAddress ?? state.wallet.predictedWalletAddress ?? "Unavailable"}
                           </strong>
                         </div>
+                        <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
+                          <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Dispatcher ready</span>
+                          <strong className="mt-1 block text-sm text-slate-100">
+                            {state.wallet.dispatcherAddress ? "Yes" : "No"}
+                          </strong>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
+                          <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Dispatcher prep</span>
+                          <strong className="mt-1 block text-sm text-slate-100">
+                            {state.wallet.dispatcherPreparedAt ? "Ready" : "Missing"}
+                          </strong>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
+                          <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Derived prep</span>
+                          <strong className="mt-1 block text-sm text-slate-100">
+                            {state.wallet.dispatcherDerivedPreparedAt ? "Ready" : "Missing"}
+                          </strong>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
+                          <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Live nonce</span>
+                          <strong className="mt-1 block text-sm text-slate-100">
+                            {state.wallet.liveNonce ?? "Unavailable"}
+                          </strong>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
+                          <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Validator</span>
+                          <strong className="mt-1 block text-sm text-slate-100">
+                            {state.wallet.validatorInstalled ? "Installed" : "Missing"}
+                          </strong>
+                        </div>
                       </div>
                     </section>
 
@@ -1267,7 +1299,42 @@ export default function PortalClient({ initialState }) {
                         {isRunning("deploy-wallet") ? "Preparing..." : "Prepare wallet + transfer preflight"}
                       </button>
                     </section>
+                </div>
+                <div className="mt-5 grid gap-3 rounded-[1.4rem] border border-white/10 bg-black/10 p-4 text-sm text-slate-300">
+                  <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-slate-400">Preflight Status</p>
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Dispatcher deploy tx</span>
+                      <strong className="mt-1 block text-sm text-slate-100">
+                        {walletPreparation?.preparation?.dispatcherDeployTx ?? "Not needed"}
+                      </strong>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Wallet top-up tx</span>
+                      <strong className="mt-1 block text-sm text-slate-100">
+                        {walletPreparation?.preparation?.walletTopUpTx ?? "Not needed"}
+                      </strong>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Dispatcher top-up tx</span>
+                      <strong className="mt-1 block text-sm text-slate-100">
+                        {walletPreparation?.preparation?.dispatcherTopUpTx ?? "Not needed"}
+                      </strong>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
+                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Derived top-up tx</span>
+                      <strong className="mt-1 block text-sm text-slate-100">
+                        {walletPreparation?.preparation?.dispatcherDerivedFundTx ?? "Not needed"}
+                      </strong>
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 md:col-span-2">
+                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Dispatcher derived balance</span>
+                      <strong className="mt-1 block text-sm text-slate-100">
+                        {walletPreparation?.preparation?.dispatcherDerivedBalance ?? "Unknown until preflight"}
+                      </strong>
+                    </div>
                   </div>
+                </div>
               </div>
             </div>
           </div>
