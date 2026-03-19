@@ -1310,45 +1310,11 @@ export default function PortalClient({ initialState }) {
                         onClick={deployWallet}
                         type="button"
                       >
-                        {isRunning("deploy-wallet") ? "Preparing..." : "Prepare wallet + transfer preflight"}
+                        {isRunning("deploy-wallet") ? "Preparing..." : "Prepare wallet"}
                       </button>
                     </section>
                 </div>
-                <div className="mt-5 grid gap-3 rounded-[1.4rem] border border-white/10 bg-black/10 p-4 text-sm text-slate-300">
-                  <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-slate-400">Preflight Status</p>
-                  <div className="grid gap-2 md:grid-cols-2">
-                    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Dispatcher deploy tx</span>
-                      <strong className="mt-1 block text-sm text-slate-100">
-                        {walletPreparation?.preparation?.dispatcherDeployTx ?? "Not needed"}
-                      </strong>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Wallet top-up tx</span>
-                      <strong className="mt-1 block text-sm text-slate-100">
-                        {walletPreparation?.preparation?.walletTopUpTx ?? "Not needed"}
-                      </strong>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Dispatcher top-up tx</span>
-                      <strong className="mt-1 block text-sm text-slate-100">
-                        {walletPreparation?.preparation?.dispatcherTopUpTx ?? "Not needed"}
-                      </strong>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Derived top-up tx</span>
-                      <strong className="mt-1 block text-sm text-slate-100">
-                        {walletPreparation?.preparation?.dispatcherDerivedFundTx ?? "Not needed"}
-                      </strong>
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 md:col-span-2">
-                      <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Dispatcher derived balance</span>
-                      <strong className="mt-1 block text-sm text-slate-100">
-                        {walletPreparation?.preparation?.dispatcherDerivedBalance ?? "Unknown until preflight"}
-                      </strong>
-                    </div>
-                  </div>
-                </div>
+                <div className="mt-5 grid gap-3 rounded-[1.4rem] border border-white/10 bg-black/10 p-4 text-sm text-slate-300" />
               </div>
             </div>
           </div>
