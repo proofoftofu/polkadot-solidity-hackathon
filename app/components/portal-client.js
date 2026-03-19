@@ -500,8 +500,13 @@ export default function PortalClient({ initialState }) {
 
   const submitBootstrapApproval = async (session) => {
     const ownerWallet = await ensureLocalOwnerWallet();
-    if (ownerWallet.address.toLowerCase() !== session.ownerAddress.toLowerCase()) {
-      throw new Error("Local owner EOA does not match the request owner");
+    const normalizedOwnerAddress = ownerWallet.address;
+    if (session.ownerAddress.toLowerCase() !== normalizedOwnerAddress.toLowerCase()) {
+      appendLog("info", "[APPROVAL] Syncing request owner to the local bootstrap signer.", {
+        href: null,
+        linkLabel: shortHash(normalizedOwnerAddress, 8, 8)
+      });
+      setOwnerAddress(normalizedOwnerAddress);
     }
 
     const account = await getOwnerAccount(ownerWallet.privateKey);
@@ -511,7 +516,7 @@ export default function PortalClient({ initialState }) {
       body: JSON.stringify({
         requestId: session.requestId,
         sessionId: session.id,
-        ownerAddress: session.ownerAddress,
+        ownerAddress: normalizedOwnerAddress,
         live: true,
         prepare: "bootstrap"
       })
@@ -525,7 +530,7 @@ export default function PortalClient({ initialState }) {
       body: JSON.stringify({
         requestId: session.requestId,
         sessionId: session.id,
-        ownerAddress: session.ownerAddress,
+        ownerAddress: normalizedOwnerAddress,
         live: true,
         submit: "bootstrap",
         ownerSignature

@@ -34,17 +34,6 @@ function evmToSubstrateAccount(address) {
   return u8aToHex(blake2AsU8a(u8aConcat(stringToU8a("evm:"), hexToU8a(address)), 256));
 }
 
-const DISPATCHER_DEPLOY_ABI = [
-  {
-    type: "constructor",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "owner_", type: "address" },
-      { name: "xcmPrecompileAddress", type: "address" }
-    ]
-  }
-];
-
 async function readArtifact(contractFile, contractName) {
   const artifactPath = path.join(ARTIFACTS_ROOT, contractFile, `${contractName}.json`);
   return JSON.parse(await readFile(artifactPath, "utf8"));
@@ -332,7 +321,7 @@ export async function prepareWalletDispatcher(walletAddressInput, existingDispat
     try {
       const feeOverrides = await getFeeOverrides(operator.publicClient);
       const txHash = await operator.walletClient.deployContract({
-        abi: DISPATCHER_DEPLOY_ABI,
+        abi: dispatcherArtifact.abi,
         bytecode: dispatcherArtifact.bytecode,
         args: [walletAddress, config.hubDeployment.contracts.xcmPrecompile],
         nonce: deployNonce,
