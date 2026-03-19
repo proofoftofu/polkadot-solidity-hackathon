@@ -1171,15 +1171,15 @@ export default function PortalClient({ initialState }) {
                 </div>
               </div>
 
-              <div className="mt-4 rounded-[1.4rem] border border-white/10 bg-white/6 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Session action</p>
-                    <p className="mt-1 text-sm text-slate-300">
-                      Run the demo transfer from this session view.
-                    </p>
-                  </div>
-                  {ENABLE_LOCAL_DEMO ? (
+              {ENABLE_LOCAL_DEMO ? (
+                <div className="mt-4 rounded-[1.4rem] border border-white/10 bg-white/6 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Session action</p>
+                      <p className="mt-1 text-sm text-slate-300">
+                        Run the demo transfer from this session view.
+                      </p>
+                    </div>
                     <button
                       className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-50 transition hover:-translate-y-0.5 hover:bg-emerald-300/16 disabled:opacity-50"
                       disabled={
@@ -1194,37 +1194,37 @@ export default function PortalClient({ initialState }) {
                         ? "Running transfer..."
                         : "Run live transfer"}
                     </button>
-                  ) : null}
-                </div>
+                  </div>
 
-                <div className="mt-4 max-h-[220px] overflow-y-auto rounded-[1rem] border border-white/10 bg-black/30 p-3">
-                  <div className="grid gap-1.5">
-                    {selectedSessionLogs.length === 0 ? (
-                      <div className={`rounded-lg border-l-4 px-3 py-2 font-mono text-xs leading-5 ${lineTone("info")}`}>
-                        [DEMO] No live transfer activity yet.
-                      </div>
-                    ) : null}
-                    {selectedSessionLogs.map((line) => (
-                      <div
-                        key={line.id}
-                        className={`rounded-lg border-l-4 px-3 py-2 font-mono text-xs leading-5 ${lineTone(line.tone)}`}
-                      >
-                        <span>{line.text}</span>
-                        {line.href ? (
-                          <a
-                            className="ml-2 text-cyan-200 underline underline-offset-4"
-                            href={line.href}
-                            rel="noreferrer"
-                            target="_blank"
-                          >
-                            {line.linkLabel ?? "view tx"}
-                          </a>
-                        ) : null}
-                      </div>
-                    ))}
+                  <div className="mt-4 max-h-[220px] overflow-y-auto rounded-[1rem] border border-white/10 bg-black/30 p-3">
+                    <div className="grid gap-1.5">
+                      {selectedSessionLogs.length === 0 ? (
+                        <div className={`rounded-lg border-l-4 px-3 py-2 font-mono text-xs leading-5 ${lineTone("info")}`}>
+                          [DEMO] No live transfer activity yet.
+                        </div>
+                      ) : null}
+                      {selectedSessionLogs.map((line) => (
+                        <div
+                          key={line.id}
+                          className={`rounded-lg border-l-4 px-3 py-2 font-mono text-xs leading-5 ${lineTone(line.tone)}`}
+                        >
+                          <span>{line.text}</span>
+                          {line.href ? (
+                            <a
+                              className="ml-2 text-cyan-200 underline underline-offset-4"
+                              href={line.href}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              {line.linkLabel ?? "view tx"}
+                            </a>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </div>
+              ) : null}
             </div>
           </div>
         ) : null}
