@@ -296,6 +296,7 @@ export default function PortalClient({ initialState }) {
   const [sessionModalId, setSessionModalId] = useState(null);
   const [walletPreparation, setWalletPreparation] = useState(null);
   const [activeRequestIndex, setActiveRequestIndex] = useState(0);
+  const [requestModalOpen, setRequestModalOpen] = useState(false);
   const [terminalLogs, setTerminalLogs] = useState(() => [{
     id: "system-initial",
     tone: "info",
@@ -867,6 +868,10 @@ export default function PortalClient({ initialState }) {
   const selectedSessionLogs = selectedSession ? (sessionLogs[selectedSession.id] ?? []) : [];
   const isRunning = (actionKey) => activeAction === actionKey;
 
+  useEffect(() => {
+    setRequestModalOpen(activeRequestCount > 0);
+  }, [activeRequestCount]);
+
   return (
     <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top,_rgba(64,182,255,0.18),_transparent_18%),linear-gradient(180deg,_#06111b_0%,_#081723_34%,_#0d1d2b_100%)] px-4 py-4 text-white md:px-8 md:py-6">
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(rgba(173,216,255,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(173,216,255,0.05)_1px,transparent_1px)] bg-[size:72px_72px]" />
@@ -882,6 +887,15 @@ export default function PortalClient({ initialState }) {
           </div>
 
           <div className="flex items-center gap-2 md:gap-3">
+            {activeRequestCount > 0 ? (
+              <button
+                className="rounded-full border border-amber-300/30 bg-amber-300/10 px-4 py-2 text-sm font-semibold text-amber-50 transition hover:-translate-y-0.5 hover:bg-amber-300/16"
+                onClick={() => setRequestModalOpen(true)}
+                type="button"
+              >
+                Pending requests {activeRequestCount}
+              </button>
+            ) : null}
             {ENABLE_LOCAL_DEMO ? (
               <button
                 className="rounded-full border border-emerald-300/30 bg-emerald-300/10 px-4 py-2 text-sm font-semibold text-emerald-50 transition hover:-translate-y-0.5 hover:bg-emerald-300/16 disabled:opacity-50"
@@ -903,7 +917,7 @@ export default function PortalClient({ initialState }) {
           </div>
         </header>
 
-        <section className="grid gap-5 xl:grid-cols-[minmax(0,1.12fr)_360px]">
+        <section className="grid gap-5">
           <div className="rounded-[2rem] border border-white/10 bg-white/5 p-3 shadow-[0_24px_100px_rgba(0,0,0,0.22)] backdrop-blur-xl md:p-4">
             <div
               ref={stageRef}
@@ -966,42 +980,65 @@ export default function PortalClient({ initialState }) {
             </div>
           </div>
 
-          <aside className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-cyan-100/65">
-                Approve session
-                <span className="ml-2 text-slate-400">
-                  {pendingRequests.length ? `${visibleRequestIndex} / ${activeRequestCount}` : "0 / 0"}
-                </span>
-              </p>
-              <button
-                className="rounded-full border border-white/10 bg-white/8 px-4 py-2 text-sm font-medium text-slate-200 transition hover:-translate-y-0.5 disabled:opacity-40"
-                disabled={activeRequestIndex >= activeRequestCount - 1}
-                onClick={() => setActiveRequestIndex((current) => Math.min(current + 1, Math.max(activeRequestCount - 1, 0)))}
-                type="button"
-              >
-                Next
-              </button>
-            </div>
+        </section>
 
-            {!activeRequest ? (
-              <div className="rounded-[1.8rem] border border-white/10 bg-white/6 p-6 shadow-[0_24px_80px_rgba(0,0,0,0.22)] backdrop-blur-xl">
-                <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-slate-400">
-                  Queue empty
-                </p>
-                <h3 className="mt-3 text-2xl font-semibold tracking-[0.04em] text-white">
-                  No session is waiting for approval.
-                </h3>
-              </div>
-            ) : (
-              <div className="relative min-h-[420px]">
-                <div className="absolute inset-x-4 top-11 h-[320px] rotate-[-6deg] rounded-[1.8rem] border border-white/8 bg-white/5" />
-                <div className="absolute inset-x-4 top-7 h-[320px] rotate-[5deg] rounded-[1.8rem] border border-white/8 bg-white/6" />
-                <article className="relative rounded-[1.8rem] border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.12),rgba(255,255,255,0.07))] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.28)] backdrop-blur-2xl">
-                  <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-cyan-100/70">
-                    Pending signature
+        {requestModalOpen ? (
+          <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/60 px-4 py-6" onClick={() => setRequestModalOpen(false)} role="presentation">
+            <div
+              className="max-h-[88vh] w-full max-w-4xl overflow-auto rounded-[1.9rem] border border-white/12 bg-[linear-gradient(180deg,rgba(11,23,34,0.95),rgba(8,17,27,0.98))] p-6 shadow-[0_28px_100px_rgba(0,0,0,0.48)] backdrop-blur-2xl"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-cyan-100/65">
+                    Approve session
+                    <span className="ml-2 text-slate-400">
+                      {pendingRequests.length ? `${visibleRequestIndex} / ${activeRequestCount}` : "0 / 0"}
+                    </span>
                   </p>
-                  <div className="mt-4 rounded-[1.4rem] border border-cyan-300/20 bg-cyan-300/8 px-4 py-4">
+                  <h2 className="mt-2 text-3xl font-semibold text-white">
+                    {activeRequest ? activeRequest.id : "No pending request"}
+                  </h2>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className="rounded-full border border-white/10 bg-white/8 px-4 py-2 text-sm font-medium text-slate-200 transition hover:-translate-y-0.5 disabled:opacity-40"
+                    disabled={activeRequestIndex <= 0}
+                    onClick={() => setActiveRequestIndex((current) => Math.max(current - 1, 0))}
+                    type="button"
+                  >
+                    Prev
+                  </button>
+                  <button
+                    className="rounded-full border border-white/10 bg-white/8 px-4 py-2 text-sm font-medium text-slate-200 transition hover:-translate-y-0.5 disabled:opacity-40"
+                    disabled={activeRequestIndex >= activeRequestCount - 1}
+                    onClick={() => setActiveRequestIndex((current) => Math.min(current + 1, Math.max(activeRequestCount - 1, 0)))}
+                    type="button"
+                  >
+                    Next
+                  </button>
+                  <button
+                    className="rounded-full border border-white/10 bg-white/8 px-4 py-2 text-sm font-semibold text-slate-100 transition hover:bg-white/12"
+                    onClick={() => setRequestModalOpen(false)}
+                    type="button"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              {!activeRequest ? (
+                <div className="mt-6 rounded-[1.8rem] border border-white/10 bg-white/6 p-6">
+                  <p className="text-[0.68rem] font-black uppercase tracking-[0.24em] text-slate-400">
+                    Queue empty
+                  </p>
+                  <h3 className="mt-3 text-2xl font-semibold tracking-[0.04em] text-white">
+                    No session is waiting for approval.
+                  </h3>
+                </div>
+              ) : (
+                <div className="mt-6 grid gap-4">
+                  <div className="rounded-[1.4rem] border border-cyan-300/20 bg-cyan-300/8 px-4 py-4">
                     <p className="text-[0.62rem] uppercase tracking-[0.18em] text-cyan-100/70">
                       Program operations
                     </p>
@@ -1032,7 +1069,7 @@ export default function PortalClient({ initialState }) {
                       ))}
                     </div>
                   </div>
-                  <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
                       <span className="block text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Owner</span>
                       <strong className="mt-1 block break-all text-sm text-slate-100">{activeRequest.userId}</strong>
@@ -1056,7 +1093,7 @@ export default function PortalClient({ initialState }) {
                       <strong className="mt-1 block text-sm text-slate-100">{activeRequest.summary}</strong>
                     </div>
                   </div>
-                  <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+                  <div className="flex flex-col gap-3 sm:flex-row">
                     <button
                       className="rounded-full border border-white/12 bg-white/8 px-4 py-3 text-sm font-semibold text-slate-100 transition hover:-translate-y-0.5 disabled:opacity-50"
                       disabled={isRunning(`reject-${activeRequest.id}`)}
@@ -1075,11 +1112,11 @@ export default function PortalClient({ initialState }) {
                       {isRunning(`approve-${activeRequest.id}`) ? "Approving..." : "Approve session"}
                     </button>
                   </div>
-                </article>
-              </div>
-            )}
-          </aside>
-        </section>
+                </div>
+              )}
+            </div>
+          </div>
+        ) : null}
 
         <section className="rounded-[1.8rem] border border-white/10 bg-[rgba(5,13,22,0.76)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.24)] backdrop-blur-2xl">
           <div className="mb-4 flex items-center justify-between gap-4">
