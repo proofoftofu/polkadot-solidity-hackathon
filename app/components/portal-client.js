@@ -75,6 +75,20 @@ function buildStateEventEntries(state) {
     });
   }
 
+  for (const execution of state.executions) {
+    if (!execution.hubTxHash && !execution.userOpHash) {
+      continue;
+    }
+    const txHash = execution.hubTxHash ?? execution.userOpHash;
+    entries.push({
+      key: `execution:${execution.id}:${execution.status}:${txHash}`,
+      tone: execution.status === "executed" ? "info" : "warning",
+      text: execution.hubTxHash
+        ? `[EXECUTION:${execution.status.toUpperCase()}] ${execution.id} · ${shortHash(execution.hubTxHash, 8, 8)}`
+        : `[EXECUTION:${execution.status.toUpperCase()}] ${execution.id} · ${shortHash(execution.userOpHash, 8, 8)}`
+    });
+  }
+
   return entries;
 }
 
@@ -374,7 +388,7 @@ export default function PortalClient({ initialState }) {
   useEffect(() => {
     const timer = setInterval(() => {
       refresh().catch(() => {});
-    }, 5000);
+    }, 2000);
     return () => clearInterval(timer);
   }, [ownerAddress]);
 

@@ -418,13 +418,16 @@ async function ensureWallet(state, ownerAddress) {
 }
 
 async function ensureDispatcher(state, wallet, fallbackDispatcherAddress, options = {}) {
+  const normalizedFallbackDispatcherAddress = getAddress(fallbackDispatcherAddress);
+  const currentDispatcherAddress = wallet.dispatcherAddress ? getAddress(wallet.dispatcherAddress) : null;
+  const dispatcherMatchesDeployment = currentDispatcherAddress === normalizedFallbackDispatcherAddress;
   logApprovalStep("ensureDispatcher:start", {
     walletAddress: wallet.predictedWalletAddress,
     existingDispatcherAddress: wallet.dispatcherAddress ?? null,
-    fallbackDispatcherAddress
+    fallbackDispatcherAddress: normalizedFallbackDispatcherAddress
   });
   if (process.env.APP_DISABLE_DISPATCHER_RUNTIME === "true" || !getEnv("PRIVATE_KEY")) {
-    wallet.dispatcherAddress = wallet.dispatcherAddress ?? fallbackDispatcherAddress;
+    wallet.dispatcherAddress = wallet.dispatcherAddress ?? normalizedFallbackDispatcherAddress;
     wallet.dispatcherPreparedAt = wallet.dispatcherPreparedAt ?? nowIso();
     wallet.updatedAt = nowIso();
     logApprovalStep("ensureDispatcher:runtime-disabled", {
@@ -434,7 +437,7 @@ async function ensureDispatcher(state, wallet, fallbackDispatcherAddress, option
   }
 
   const requiresDerivedFunding = options.fundDerived === true;
-  if (wallet.dispatcherAddress && wallet.dispatcherPreparedAt && (!requiresDerivedFunding || wallet.dispatcherDerivedPreparedAt)) {
+  if (!dispatcherMatchesDeployment && wallet.dispatcherAddress && wallet.dispatcherPreparedAt && (!requiresDerivedFunding || wallet.dispatcherDerivedPreparedAt)) {
     logApprovalStep("ensureDispatcher:cached", {
       dispatcherAddress: wallet.dispatcherAddress,
       dispatcherPreparedAt: wallet.dispatcherPreparedAt,
@@ -447,9 +450,20 @@ async function ensureDispatcher(state, wallet, fallbackDispatcherAddress, option
     throw new Error("Wallet prediction is required before preparing the dispatcher");
   }
 
-  const prepared = await prepareWalletDispatcher(wallet.predictedWalletAddress, wallet.dispatcherAddress, {
+  if (wallet.dispatcherAddress && dispatcherMatchesDeployment) {
+    logApprovalStep("ensureDispatcher:stale", {
+      storedDispatcherAddress: wallet.dispatcherAddress,
+      deploymentDispatcherAddress: normalizedFallbackDispatcherAddress
+    });
+  }
+
+  const prepared = await prepareWalletDispatcher(
+    wallet.predictedWalletAddress,
+    wallet.dispatcherAddress && !dispatcherMatchesDeployment ? wallet.dispatcherAddress : null,
+    {
     fundDerived: requiresDerivedFunding
-  });
+    }
+  );
   wallet.dispatcherAddress = prepared.dispatcherAddress;
   wallet.dispatcherPreparedAt = nowIso();
   if (requiresDerivedFunding && prepared.dispatcherDerivedFundTx) {
@@ -703,14 +717,26 @@ export async function prepareSessionForExecution(sessionId, ownerAddress) {
     throw new Error("Request not found");
   }
 
-  if (session.allowedTarget && session.bootstrap && session.executionDraft && session.walletAddress) {
+  const config = await getContractsConfig();
+  const wallet = await ensureWallet(state, session.ownerAddress);
+  const currentDispatcherAddress = getAddress(config.hubDeployment.contracts.crossChainDispatcher);
+  const walletDispatcherAddress = wallet.dispatcherAddress ? getAddress(wallet.dispatcherAddress) : null;
+  const sessionMatchesWalletDispatcher =
+    session.allowedTarget
+    && walletDispatcherAddress
+    && getAddress(session.allowedTarget) === walletDispatcherAddress
+    && walletDispatcherAddress !== currentDispatcherAddress;
+  const sessionHasRuntime = Boolean(session.bootstrap && session.executionDraft && session.walletAddress);
+  if (sessionMatchesWalletDispatcher && sessionHasRuntime) {
     return sanitizeSession(session);
   }
 
   logApprovalStep("prepare-session:start", {
     sessionId,
     requestId: session.requestId,
-    ownerAddress: session.ownerAddress
+    ownerAddress: session.ownerAddress,
+    currentDispatcherAddress,
+    walletDispatcherAddress
   });
   const startedAt = Date.now();
   const prepared = await prepareSessionRuntime(state, session, request, { fundDerived: false });
@@ -835,7 +861,12 @@ export async function deployWalletForOwner(ownerAddress) {
 }
 
 export async function markSessionSubmitted(sessionId, updates, ownerAddress) {
-  const state = await readOwnerState(ownerAddress);
+  const resolvedOwnerAddress = ownerAddress ?? updates?.ownerAddress;
+  if (!resolvedOwnerAddress) {
+    throw new Error("ownerAddress is required");
+  }
+
+  const state = await readOwnerState(resolvedOwnerAddress);
   const session = state.sessions.find((entry) => entry.id === sessionId);
   if (!session) {
     throw new Error("Session not found");
@@ -862,8 +893,13 @@ export async function markSessionSubmitted(sessionId, updates, ownerAddress) {
   return session;
 }
 
-export async function markExecutionSubmitted(executionId, updates) {
-  const state = await readOwnerState();
+export async function markExecutionSubmitted(executionId, updates, ownerAddress) {
+  const resolvedOwnerAddress = ownerAddress ?? updates?.ownerAddress;
+  if (!resolvedOwnerAddress) {
+    throw new Error("ownerAddress is required");
+  }
+
+  const state = await readOwnerState(resolvedOwnerAddress);
   const execution = state.executions.find((entry) => entry.id === executionId);
   if (!execution) {
     throw new Error("Execution not found");

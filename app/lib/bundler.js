@@ -149,6 +149,13 @@ async function readWalletDeployment(clients, walletAddress) {
   return Boolean(code && code !== "0x");
 }
 
+async function readOperatorNonce(clients) {
+  return clients.publicClient.getTransactionCount({
+    address: clients.account.address,
+    blockTag: "pending"
+  });
+}
+
 async function sendPackedUserOperation(userOp) {
   const entryPoint = await getEntryPointContract();
   const hydrated = hydrateUserOp(userOp);
@@ -169,14 +176,51 @@ async function sendPackedUserOperation(userOp) {
     userOpHash: hash,
     ...feeOverrides
   });
-  const txHash = await entryPoint.clients.walletClient.writeContract({
-    account: entryPoint.clients.account,
-    address: entryPoint.address,
-    abi: entryPoint.abi,
-    functionName: "handleOps",
-    args: [[hydrated]],
-    ...feeOverrides
-  });
+  const operatorNonce = await readOperatorNonce(entryPoint.clients);
+  let txHash;
+  try {
+    txHash = await entryPoint.clients.walletClient.writeContract({
+      account: entryPoint.clients.account,
+      address: entryPoint.address,
+      abi: entryPoint.abi,
+      functionName: "handleOps",
+      args: [[hydrated]],
+      nonce: operatorNonce,
+      ...feeOverrides
+    });
+  } catch (error) {
+    const message = `${error?.shortMessage ?? error?.message ?? String(error)}`.toLowerCase();
+    const isNonceStale = message.includes("nonce") && message.includes("lower than the current nonce");
+    const isAlreadyImported = message.includes("already imported");
+    if (!isNonceStale && !isAlreadyImported) {
+      throw error;
+    }
+
+    const refreshedNonce = await readOperatorNonce(entryPoint.clients);
+    const retryFeeOverrides = {};
+    if (typeof feeOverrides.maxFeePerGas === "bigint") {
+      retryFeeOverrides.maxFeePerGas = bumpFee(feeOverrides.maxFeePerGas, 150n, 100n);
+    }
+    if (typeof feeOverrides.maxPriorityFeePerGas === "bigint") {
+      retryFeeOverrides.maxPriorityFeePerGas = bumpFee(feeOverrides.maxPriorityFeePerGas, 200n, 100n);
+    }
+    logBundler("Retrying handleOps with refreshed operator nonce", {
+      sender: hydrated.sender,
+      nonce: hydrated.nonce.toString(),
+      operatorNonce: refreshedNonce.toString(),
+      userOpHash: hash,
+      ...retryFeeOverrides
+    });
+    txHash = await entryPoint.clients.walletClient.writeContract({
+      account: entryPoint.clients.account,
+      address: entryPoint.address,
+      abi: entryPoint.abi,
+      functionName: "handleOps",
+      args: [[hydrated]],
+      nonce: refreshedNonce,
+      ...retryFeeOverrides
+    });
+  }
   const receipt = await entryPoint.clients.publicClient.waitForTransactionReceipt({ hash: txHash });
   logBundler("handleOps accepted", {
     txHash,
@@ -354,7 +398,7 @@ export async function sendUserOperation(input) {
     await markExecutionSubmitted(input.executionId, {
       hubTxHash: submission.txHash,
       userOpHash: submission.userOpHash
-    });
+    }, input.ownerAddress);
   }
 
   return {
