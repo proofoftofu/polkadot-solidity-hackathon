@@ -1169,6 +1169,35 @@ export default function PortalClient({ initialState }) {
                     </div>
                   </dl>
                 </div>
+                <div className="min-w-0 rounded-[1.4rem] border border-white/10 bg-white/6 p-4 md:col-span-2">
+                  <p className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Allowed action</p>
+                  <dl className="mt-3 grid gap-3 text-sm text-slate-200 md:grid-cols-2">
+                    <div className="grid gap-1 rounded-xl border border-white/8 bg-black/15 px-3 py-2">
+                      <dt className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Selector</dt>
+                      <dd className="min-w-0 break-all font-mono text-xs leading-5 text-slate-100">{selectedSession.allowedSelector ?? "Unknown"}</dd>
+                    </div>
+                    <div className="grid gap-1 rounded-xl border border-white/8 bg-black/15 px-3 py-2">
+                      <dt className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Endpoint kinds</dt>
+                      <dd className="min-w-0 break-all font-mono text-xs leading-5 text-slate-100">
+                        {(selectedSession.allowedEndpointKinds ?? []).join(", ") || "Unknown"}
+                      </dd>
+                    </div>
+                    <div className="grid gap-1 rounded-xl border border-white/8 bg-black/15 px-3 py-2">
+                      <dt className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Instruction kinds</dt>
+                      <dd className="min-w-0 break-all font-mono text-xs leading-5 text-slate-100">
+                        {(selectedSession.allowedInstructionKinds ?? []).join(", ") || "Unknown"}
+                      </dd>
+                    </div>
+                    <div className="grid gap-1 rounded-xl border border-white/8 bg-black/15 px-3 py-2">
+                      <dt className="text-[0.62rem] uppercase tracking-[0.18em] text-slate-400">Asset limit</dt>
+                      <dd className="min-w-0 break-all font-mono text-xs leading-5 text-slate-100">
+                        {selectedSession.assetLimits?.[0]
+                          ? `${selectedSession.assetLimits[0].assetId} · ${selectedSession.assetLimits[0].maxAmount}`
+                          : "Unknown"}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
               </div>
 
               {ENABLE_LOCAL_DEMO ? (
