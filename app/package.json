@@ -14,9 +14,10 @@
     "@polkadot/util": "^13.5.7",
     "@polkadot/util-crypto": "^13.5.7",
     "next": "15.2.2",
-    "redis": "^4.7.0",
     "react": "19.0.0",
     "react-dom": "19.0.0",
+    "redis": "^4.7.0",
+    "solc": "^0.8.34",
     "viem": "^2.38.5"
   },
   "devDependencies": {
