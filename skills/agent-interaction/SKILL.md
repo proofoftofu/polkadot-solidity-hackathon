@@ -103,9 +103,11 @@ But the session key rule is strict:
 The `ownerAddress` sent in `POST /agent/requests` is authoritative. The portal approval must approve that same owner address, and the app now enforces that.
 
 The agent must be given `ownerAddress` by the caller. Do not assume the agent can discover it from browser localStorage or any other client-side state.
+If `ownerAddress` is not provided, ask the caller for it before continuing.
 
 Create exactly one approval request for exactly one typed XCM action.
 The only supported action is the PAS transfer demo. Do not use this skill for other XCM routes or other beneficiaries.
+For the demo flow, the beneficiary is the user wallet destination. If the beneficiary is not provided, ask the caller for the beneficiary wallet address before creating the request.
 
 Example:
 
@@ -120,7 +122,7 @@ curl -s http://127.0.0.1:3000/agent/requests \
     "summary":"Send PAS from Polkadot Hub Testnet to People Chain Paseo",
     "program":{
       "transferAmount":"10000000000",
-      "beneficiary":"0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48"
+      "beneficiary":"<caller-provided-beneficiary-wallet-address>"
     }
   }'
 ```
@@ -134,6 +136,7 @@ Tell the user there is a pending request in the portal. Do not continue until th
 
 Important:
 - the owner shown on the request card must match the generated `ownerAddress`
+- the beneficiary shown in the request must match the caller-provided beneficiary wallet address
 - the portal should approve that request owner, not a different hardcoded wallet field
 
 Poll continuously with inline Node or repeated `curl`.
@@ -266,7 +269,7 @@ The agent flow must match the local browser demo exactly:
   - `summary: "Send PAS from Polkadot Hub Testnet to People Chain Paseo"`
   - `value: "0"`
   - `program.transferAmount: "10000000000"`
-  - `program.beneficiary: "0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48"`
+  - `program.beneficiary: "<caller-provided-beneficiary-wallet-address>"`
 - approval should be read back from `/agent/requests/<request-id>?ownerAddress=...`
 - session resolution must use `/agent/sessions/<session-id>?ownerAddress=...`
 - bootstrap and live execution must come from `/agent/executions`
@@ -291,5 +294,6 @@ When the flow stalls, inspect the Next.js server logs. The app now logs request 
 - Never expose sensitive session material in the response.
 - Never post owner or session private keys to the app API.
 - The owner address to use is the request `ownerAddress`, not an unrelated portal default wallet address.
+- If `beneficiary` is not provided by the caller, ask for it before creating the request.
 - Never use `POST /api/bundler/send-userop` for the demo path unless you are debugging a backend issue.
 - Prefer `http://127.0.0.1:3000` unless the user says otherwise.
