@@ -102,3 +102,35 @@ test("session lookup never exposes a private key", async () => {
   const publicView = await getSessionRecord(session.id);
   assert.equal(publicView.sessionPrivateKey, undefined);
 });
+
+test("session execution can continue after the request record is gone", async () => {
+  const { createAgentRequest, approveRequest, deployWalletForOwner, executeAgentRequestWithOptions } = await import("../lib/domain.js");
+  const { readState, writeState } = await import("../lib/state-store.js");
+
+  const request = await createAgentRequest({
+    actionType: "execute",
+    targetChain: "people-paseo",
+    sessionPublicKey: "0x1234567890123456789012345678901234567890",
+    summary: "Transfer PAS",
+    program: {
+      transferAmount: "10000000000",
+      beneficiary: "0x8eaf04151687736326c9fea17e25fc5287613693c912909cb226aa4794f26a48"
+    }
+  });
+
+  const session = await approveRequest(request.id);
+  await deployWalletForOwner(session.ownerAddress);
+
+  const state = await readState(session.ownerAddress);
+  state.requests = state.requests.filter((entry) => entry.id !== request.id);
+  await writeState(session.ownerAddress, state);
+
+  const execution = await executeAgentRequestWithOptions({
+    requestId: request.id,
+    sessionId: session.id,
+    ownerAddress: session.ownerAddress
+  });
+
+  assert.equal(execution.sessionId, session.id);
+  assert.equal(execution.destinationChain, "people-paseo");
+});

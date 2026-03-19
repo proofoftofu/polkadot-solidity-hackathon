@@ -1,6 +1,6 @@
 ---
 name: agent-interaction
-description: Interact with the local `workspace/app` wallet portal through localhost APIs. The agent persists its session key locally, waits for approval by polling until the request changes state, and executes the real Hub -> People XCM flow through the backend.
+description: Interact with the Nova wallet portal through the deployed app or localhost APIs. The agent persists its session key locally, waits for approval by polling until the request changes state, and executes the real Hub -> People XCM flow through the backend.
 ---
 
 # Agent Interaction
@@ -36,6 +36,9 @@ Persistent local session state should live in a small JSON file in the current w
 
 - `.agent-session-keys.json`
 
+The stored record must include both the `sessionPublicKey` and the matching `sessionPrivateKey`.
+Do not rely on browser localStorage or remote app state for the private key.
+
 ## App contract
 
 The app exposes:
@@ -56,7 +59,7 @@ The supported end-to-end flow is the same one used by the local browser demo, bu
 5. prepare and submit live session execution through `POST /agent/executions`
 
 Do not switch to a different owner namespace or a different request/session pair mid-flow.
-Do not reconstruct session payloads, call data, or XCM parameters yourself when the backend already returned them.
+Do not reconstruct session payloads, call data, XCM parameters, or signature wrappers yourself when the backend already returned them.
 This skill only supports the PAS transfer demo from Polkadot Hub Testnet to People Chain Paseo.
 
 ## Reuse the current session first
@@ -72,6 +75,7 @@ Use a small inline Node command to:
 - store the record back into `.agent-session-keys.json`
 
 Only reuse a session when the agent has the matching local session key in `.agent-session-keys.json`.
+If the local record does not have the matching `sessionPrivateKey`, do not reuse that record even if the on-chain session still exists.
 
 If there is an active session on-chain but no matching local session private key is available, do not reuse that on-chain session. Register a new session key and create a new approval request.
 
@@ -238,6 +242,14 @@ This returns `prepared.payloadHash` and `prepared.replayNonce`. Sign that locall
 node --input-type=module -e "import { privateKeyToAccount } from 'viem/accounts'; const pk=process.argv[1].startsWith('0x') ? process.argv[1] : `0x${process.argv[1]}`; const payloadHash=process.argv[2]; const account=privateKeyToAccount(pk); const signature=await account.signMessage({ message: { raw: payloadHash } }); console.log(JSON.stringify({ address: account.address, payloadHash, signature }));" <session-private-key> <session-payload-hash>
 ```
 
+Important:
+
+- pass the backend `prepared.payloadHash` directly into `signMessage({ message: { raw: payloadHash } })`
+- keep the returned signature as a raw 65-byte ECDSA signature
+- do not hash it again, stringify it, base64-encode it, or wrap it in another object before sending it back
+- submit the raw hex signature string only
+- the backend already wraps the session signature into the validator signature format
+
 Submit only the signature:
 
 ```bash
@@ -274,6 +286,7 @@ The agent flow must match the local browser demo exactly:
 - session resolution must use `/agent/sessions/<session-id>?ownerAddress=...`
 - bootstrap and live execution must come from `/agent/executions`
 - the session signature must be made from `prepared.payloadHash` returned by the backend
+- the session signature must be a raw 65-byte ECDSA signature and must be submitted unchanged as a hex string
 - the agent must not invent a different XCM payload or different beneficiary/amount when running the demo flow
 - if the backend returns a prepared payload that differs from the demo values above, stop and treat that as a mismatch rather than modifying the payload locally
 

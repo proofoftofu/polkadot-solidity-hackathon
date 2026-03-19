@@ -607,8 +607,8 @@ export async function createAgentRequest(payload) {
   return toSerializable(request);
 }
 
-export async function listRequests() {
-  const state = await readOwnerState();
+export async function listRequests(ownerAddress) {
+  const state = await readOwnerState(ownerAddress);
   return state.requests;
 }
 
@@ -732,10 +732,7 @@ export async function prepareSessionForExecution(sessionId, ownerAddress) {
   if (!session) {
     throw new Error("Session not found");
   }
-  const request = state.requests.find((entry) => entry.id === session.requestId);
-  if (!request) {
-    throw new Error("Request not found");
-  }
+  const request = state.requests.find((entry) => entry.id === session.requestId) ?? null;
 
   const config = await getContractsConfig();
   const wallet = await ensureWallet(state, session.ownerAddress);
@@ -749,6 +746,12 @@ export async function prepareSessionForExecution(sessionId, ownerAddress) {
   const sessionHasRuntime = Boolean(session.bootstrap && session.executionDraft && session.walletAddress);
   if (sessionMatchesWalletDispatcher && sessionHasRuntime) {
     return sanitizeSession(session);
+  }
+  if (!request && session.status === "active" && sessionHasRuntime) {
+    return sanitizeSession(session);
+  }
+  if (!request) {
+    throw new Error("Request not found");
   }
 
   logApprovalStep("prepare-session:start", {
@@ -944,41 +947,40 @@ export async function executeAgentRequestWithOptions({ requestId, sessionId, own
 
   const state = await readOwnerState(ownerAddress);
   const request = state.requests.find((entry) => entry.id === requestId);
-  if (!request) {
-    throw new Error("Request not found");
-  }
-
   const session = state.sessions.find((entry) => entry.id === sessionId);
   if (!session) {
     throw new Error("Session not found");
   }
-  if (session.requestId !== request.id) {
+  if (request && session.requestId !== request.id) {
     throw new Error("sessionId does not belong to requestId");
   }
   if (session.status !== "active") {
     throw new Error("Session is not active");
   }
 
+  const requestIdForExecution = request?.id ?? session.requestId ?? requestId;
   const execution = {
     id: makeId("exec"),
     sessionId: session.id,
-    requestId: request.id,
-    routeType: request.routeType,
-    sourceChain: request.sourceChain,
-    destinationChain: request.targetChain,
+    requestId: requestIdForExecution,
+    routeType: request?.routeType ?? "xcm",
+    sourceChain: request?.sourceChain ?? "polkadot-hub-testnet",
+    destinationChain: request?.targetChain ?? session.targetChain,
     status: statusOverride ?? (ENABLE_CHAIN_SUBMISSION ? "submitted" : "simulated"),
     hubTxHash: ENABLE_CHAIN_SUBMISSION ? null : `0x${nodeRandomBytes(32).toString("hex")}`,
     remoteTxHash: null,
     result: resultOverride ?? {
       mode: ENABLE_CHAIN_SUBMISSION ? "live-disabled-in-codepath" : "simulation",
-      requestId: session.executionDraft.requestId,
-      executionCalldata: session.executionDraft.executionCalldata
+      requestId: session.executionDraft?.requestId ?? requestIdForExecution,
+      executionCalldata: session.executionDraft?.executionCalldata ?? null
     },
     createdAt: nowIso()
   };
 
-  request.status = "executed";
-  request.updatedAt = nowIso();
+  if (request) {
+    request.status = "executed";
+    request.updatedAt = nowIso();
+  }
   session.updatedAt = nowIso();
   state.executions.unshift(execution);
   await writeOwnerState(session.ownerAddress, state);

@@ -37,8 +37,24 @@ export async function POST(request) {
         prepare: body.prepare,
         submit: body.submit
       });
-      const approvedRequest = await getRequestById(body.requestId, ownerAddress);
       const session = await getSessionRecord(body.sessionId, { ownerAddress });
+      let approvedRequest = null;
+      if (body.requestId) {
+        try {
+          approvedRequest = await getRequestById(body.requestId, ownerAddress);
+        } catch (error) {
+          if (body.prepare || body.submit) {
+            console.log("[agent/executions] live-flow:request-missing", {
+              ownerAddress,
+              requestId: body.requestId,
+              sessionId: body.sessionId,
+              error: error.message
+            });
+          } else {
+            throw error;
+          }
+        }
+      }
 
       if (body.prepare === "bootstrap") {
         console.log("[agent/executions] live-flow:prepare-bootstrap:start", {
@@ -106,7 +122,7 @@ export async function POST(request) {
         const prepared = await buildSessionUserOp(body.sessionId, body.sessionSignature, body.signerAddress, ownerAddress);
         const submission = await sendUserOperation(prepared);
         execution = await executeAgentRequestWithOptions({
-          requestId: body.requestId,
+          requestId: body.requestId ?? session.requestId ?? body.sessionId,
           sessionId: body.sessionId,
           ownerAddress,
           statusOverride: "submitted",
