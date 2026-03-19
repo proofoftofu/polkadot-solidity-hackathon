@@ -498,6 +498,16 @@ export default function PortalClient({ initialState }) {
     }
   };
 
+  const resolveActionOwner = async () => {
+    const ownerWallet = await ensureLocalOwnerWallet();
+    if (!ownerAddressRef.current || ownerAddressRef.current.toLowerCase() !== ownerWallet.address.toLowerCase()) {
+      ownerAddressRef.current = ownerWallet.address;
+      setOwnerAddress(ownerWallet.address);
+      await refresh(ownerWallet.address);
+    }
+    return ownerWallet.address;
+  };
+
   const submitBootstrapApproval = async (session) => {
     const ownerWallet = await ensureLocalOwnerWallet();
     const normalizedOwnerAddress = ownerWallet.address;
@@ -552,10 +562,11 @@ export default function PortalClient({ initialState }) {
 
   const deployWallet = () =>
     submit("deploy-wallet", "Preparing wallet runtime", async () => {
+      const resolvedOwnerAddress = await resolveActionOwner();
       const prepared = await requestJson("/api/wallet/deploy", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ownerAddress })
+        body: JSON.stringify({ ownerAddress: resolvedOwnerAddress })
       });
       setWalletPreparation(prepared);
 
@@ -597,10 +608,11 @@ export default function PortalClient({ initialState }) {
 
   const approve = (request) =>
     submit(`approve-${request.id}`, `Approving ${request.id}`, async () => {
+      const resolvedOwnerAddress = await resolveActionOwner();
       const approved = await requestJson(`/api/requests/${request.id}/approve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ownerAddress: request.userId })
+        body: JSON.stringify({ ownerAddress: resolvedOwnerAddress })
       });
 
       for (const txHash of approved.session?.approvalMeta?.dispatcherTransactions ?? []) {
@@ -624,14 +636,15 @@ export default function PortalClient({ initialState }) {
 
   const reject = (id) =>
     submit(`reject-${id}`, `Rejecting ${id}`, async () => {
-      await requestJson(`/api/requests/${id}/reject?ownerAddress=${encodeURIComponent(ownerAddress)}`, { method: "POST" });
+      const resolvedOwnerAddress = await resolveActionOwner();
+      await requestJson(`/api/requests/${id}/reject?ownerAddress=${encodeURIComponent(resolvedOwnerAddress)}`, { method: "POST" });
     });
 
   const initiateDemoAgent = () =>
     submit("initiate-demo", "Initiating demo agent", async () => {
       appendLog("info", "[DEMO] Booting remote agent terminal.");
+      const demoOwnerAddress = await resolveActionOwner();
       const ownerWallet = await ensureLocalOwnerWallet();
-      const demoOwnerAddress = ownerWallet.address;
 
       let demoSession = getReusableDemoSession(demoOwnerAddress);
       if (!demoSession) {
@@ -685,11 +698,12 @@ export default function PortalClient({ initialState }) {
       if (!session?.requestId || !session?.id) {
         throw new Error("No approved session is selected");
       }
+      const resolvedOwnerAddress = await resolveActionOwner();
       const ownerWallet = await ensureLocalOwnerWallet();
       const challenge = `agent-wallet:session:${session.id}:owner:${session.ownerAddress}`;
       const signature = await signOwnerChallenge(ownerWallet, challenge);
       const latestSessionPayload = await requestJson(
-        `/agent/sessions/${session.id}?ownerAddress=${encodeURIComponent(session.ownerAddress)}&challenge=${encodeURIComponent(challenge)}&signature=${encodeURIComponent(signature)}`
+        `/agent/sessions/${session.id}?ownerAddress=${encodeURIComponent(resolvedOwnerAddress)}&challenge=${encodeURIComponent(challenge)}&signature=${encodeURIComponent(signature)}`
       );
       const latestSession = latestSessionPayload.session;
       const demoSession = getReusableDemoSession(latestSession.ownerAddress);
@@ -714,7 +728,7 @@ export default function PortalClient({ initialState }) {
         body: JSON.stringify({
           requestId: latestSession.requestId,
           sessionId: latestSession.id,
-          ownerAddress: latestSession.ownerAddress,
+          ownerAddress: resolvedOwnerAddress,
           live: true,
           prepare: "session"
         })
@@ -734,7 +748,7 @@ export default function PortalClient({ initialState }) {
         body: JSON.stringify({
           requestId: latestSession.requestId,
           sessionId: latestSession.id,
-          ownerAddress: latestSession.ownerAddress,
+          ownerAddress: resolvedOwnerAddress,
           live: true,
           submit: "session",
           signerAddress: demoSession.sessionPublicKey,
@@ -774,14 +788,15 @@ export default function PortalClient({ initialState }) {
 
   const removeSession = (session) =>
     submit(`remove-session-${session.id}`, `Removing ${session.id}`, async () => {
-      await requestJson(`/api/sessions/${session.id}?ownerAddress=${encodeURIComponent(session.ownerAddress)}`, { method: "DELETE" });
+      const resolvedOwnerAddress = await resolveActionOwner();
+      await requestJson(`/api/sessions/${session.id}?ownerAddress=${encodeURIComponent(resolvedOwnerAddress)}`, { method: "DELETE" });
       removeSessionPosition(session.id);
       if (demoContext?.sessionId === session.id) {
         setDemoContext((current) => current ? { ...current, sessionId: null, status: "idle" } : current);
       }
-      const saved = getReusableDemoSession(session.ownerAddress);
+      const saved = getReusableDemoSession(resolvedOwnerAddress);
       if (saved?.sessionId === session.id) {
-        upsertDemoSession(session.ownerAddress, {
+        upsertDemoSession(resolvedOwnerAddress, {
           sessionId: null,
           requestId: null,
           status: "removed",
