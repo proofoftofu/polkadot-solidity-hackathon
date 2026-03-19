@@ -944,7 +944,7 @@ export default function PortalClient({ initialState }) {
                   </button>
                   <button
                     className="rounded-full border border-white/10 bg-white/8 px-7 py-4 text-base font-semibold text-slate-100 transition hover:-translate-y-0.5 hover:bg-white/12"
-                    onClick={() => window.open("https://docs.polkadot.com/", "_blank", "noreferrer")}
+                    onClick={() => window.open("https://github.com/proofoftofu/polkadot-solidity-hackathon", "_blank", "noreferrer")}
                     type="button"
                   >
                     Docs
@@ -1444,6 +1444,33 @@ export default function PortalClient({ initialState }) {
               <div className="p-5">
                 <div className="mb-5 rounded-[1.4rem] border border-white/10 bg-white/6 px-4 py-4 text-sm text-slate-300">
                   Base wallet preparation lives here. This predicts the wallet address, deploys the dispatcher if needed, and runs the transfer preflight top-ups required before live XCM execution.
+                </div>
+                <div className="mb-5 grid gap-4 rounded-[1.4rem] border border-cyan-300/18 bg-cyan-300/7 px-4 py-4 text-sm text-slate-200 md:grid-cols-2">
+                  <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
+                    <p className="text-[0.62rem] font-black uppercase tracking-[0.18em] text-cyan-100/70">
+                      Install skill
+                    </p>
+                    <p className="mt-2 leading-6 text-slate-300">
+                      Open{" "}
+                      <a
+                        className="font-mono text-cyan-100 underline underline-offset-4"
+                        href="https://vercel.com/proofoftof-projects/skills/agent-interaction/SKILL.md"
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        /skills/agent-interaction/SKILL.md
+                      </a>{" "}
+                      and install the skill into your agent workflow before requesting a session.
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-black/12 px-4 py-3">
+                    <p className="text-[0.62rem] font-black uppercase tracking-[0.18em] text-cyan-100/70">
+                      Sample prompt
+                    </p>
+                    <p className="mt-2 leading-6 text-slate-300">
+                      <span className="font-mono text-cyan-100">Request a fresh session for owner 0x..., beneficiary 0x..., then approve and execute the transfer.</span>
+                    </p>
+                  </div>
                 </div>
                 <div className="grid gap-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
                     <section className="rounded-[1.6rem] border border-white/10 bg-white/6 p-5">
