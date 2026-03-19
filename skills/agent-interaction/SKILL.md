@@ -5,9 +5,9 @@ description: Interact with the local `workspace/app` wallet portal through local
 
 # Agent Interaction
 
-Use this skill when Codex needs to operate the local wallet app over `http://127.0.0.1:3000`.
+Use this skill when Codex needs to operate the wallet app over `https://polkadot-solidity-hackathon.vercel.app`.
 
-Treat localhost as a machine-local dependency. If sandboxed network access blocks `curl` to `127.0.0.1`, rerun with approval.
+If the current sandbox blocks outbound network access to the deployed app or localhost, ask for permission before retrying the request outside the sandbox.
 
 This skill must be self-contained. Do not assume helper scripts from the repo exist when the skill is installed elsewhere.
 
@@ -144,7 +144,7 @@ Poll continuously with inline Node or repeated `curl`.
 Preferred pattern:
 
 ```bash
-node --input-type=module -e "const requestId=process.argv[1]; const baseUrl='http://127.0.0.1:3000'; for (;;) { try { const res = await fetch(`${baseUrl}/agent/requests/${requestId}`); const body = await res.json().catch(() => ({})); if (res.ok && body.request?.status === 'approved' && body.request?.sessionId) { console.log(JSON.stringify(body, null, 2)); process.exit(0); } if (res.ok && body.request?.status === 'rejected') { console.log(JSON.stringify(body, null, 2)); process.exit(2); } console.log(JSON.stringify({ requestId, status: body.request?.status ?? 'waiting', sessionId: body.request?.sessionId ?? null })); } catch (error) { console.log(JSON.stringify({ requestId, status: 'waiting', error: error.message })); } await new Promise((resolve) => setTimeout(resolve, 5000)); }" <request-id>
+node --input-type=module -e "const requestId=process.argv[1]; const baseUrl='https://polkadot-solidity-hackathon.vercel.app'; for (;;) { try { const res = await fetch(`${baseUrl}/agent/requests/${requestId}`); const body = await res.json().catch(() => ({})); if (res.ok && body.request?.status === 'approved' && body.request?.sessionId) { console.log(JSON.stringify(body, null, 2)); process.exit(0); } if (res.ok && body.request?.status === 'rejected') { console.log(JSON.stringify(body, null, 2)); process.exit(2); } console.log(JSON.stringify({ requestId, status: body.request?.status ?? 'waiting', sessionId: body.request?.sessionId ?? null })); } catch (error) { console.log(JSON.stringify({ requestId, status: 'waiting', error: error.message })); } await new Promise((resolve) => setTimeout(resolve, 5000)); }" <request-id>
 ```
 
 Policy:
@@ -162,7 +162,7 @@ Policy:
 Read the approved session:
 
 ```bash
-curl -s http://127.0.0.1:3000/agent/sessions/<session-id>
+curl -s https://polkadot-solidity-hackathon.vercel.app/agent/sessions/<session-id>
 ```
 
 Do not print secrets. Treat any private key or token-like field as sensitive.
@@ -174,7 +174,7 @@ Persist the approved session metadata back into `.agent-session-keys.json` so th
 Ask the backend for the exact bootstrap action to perform:
 
 ```bash
-curl -s http://127.0.0.1:3000/agent/executions \
+curl -s https://polkadot-solidity-hackathon.vercel.app/agent/executions \
   -H 'content-type: application/json' \
   -d '{
     "requestId":"<request-id>",
@@ -202,7 +202,7 @@ node --input-type=module -e "import { privateKeyToAccount } from 'viem/accounts'
 Submit only the signature:
 
 ```bash
-curl -s http://127.0.0.1:3000/agent/executions \
+curl -s https://polkadot-solidity-hackathon.vercel.app/agent/executions \
   -H 'content-type: application/json' \
   -d '{
     "requestId":"<request-id>",
@@ -222,7 +222,7 @@ After bootstrap or owner-install succeeds, update `.agent-session-keys.json` wit
 Ask the backend for the exact session payload to sign:
 
 ```bash
-curl -s http://127.0.0.1:3000/agent/executions \
+curl -s https://polkadot-solidity-hackathon.vercel.app/agent/executions \
   -H 'content-type: application/json' \
   -d '{
     "requestId":"<request-id>",
@@ -241,7 +241,7 @@ node --input-type=module -e "import { privateKeyToAccount } from 'viem/accounts'
 Submit only the signature:
 
 ```bash
-curl -s http://127.0.0.1:3000/agent/executions \
+curl -s https://polkadot-solidity-hackathon.vercel.app/agent/executions \
   -H 'content-type: application/json' \
   -d '{
     "requestId":"<request-id>",
@@ -296,4 +296,4 @@ When the flow stalls, inspect the Next.js server logs. The app now logs request 
 - The owner address to use is the request `ownerAddress`, not an unrelated portal default wallet address.
 - If `beneficiary` is not provided by the caller, ask for it before creating the request.
 - Never use `POST /api/bundler/send-userop` for the demo path unless you are debugging a backend issue.
-- Prefer `http://127.0.0.1:3000` unless the user says otherwise.
+- Prefer `https://polkadot-solidity-hackathon.vercel.app` unless the user says localhost is the target.
